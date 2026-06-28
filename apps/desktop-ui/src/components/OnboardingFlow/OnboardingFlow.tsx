@@ -42,82 +42,82 @@ export default function OnboardingFlow({ onComplete }: { onComplete: () => void 
 
   return (
     <div className="onboarding-overlay">
-      <div className="onboarding-window">
+      <div className="onboarding-window glass-panel">
         <div className="onboarding-sidebar">
           <div className="ob-logo">Wormhole</div>
           <ul className="ob-steps">
-            <li className={step >= 1 ? 'active' : ''}>Welcome</li>
-            <li className={step >= 2 ? 'active' : ''}>Identity</li>
-            <li className={step >= 3 ? 'active' : ''}>Connect Peer</li>
-            <li className={step >= 4 ? 'active' : ''}>Features</li>
+            <li className={step >= 1 ? 'active' : ''}>欢迎</li>
+            <li className={step >= 2 ? 'active' : ''}>设备标识</li>
+            <li className={step >= 3 ? 'active' : ''}>连接对端</li>
+            <li className={step >= 4 ? 'active' : ''}>核心功能</li>
           </ul>
         </div>
         
         <div className="onboarding-content">
           {step === 1 && (
             <div className="ob-step-pane">
-              <h2>Welcome to Wormhole</h2>
-              <p>A seamless, secure, and blazing-fast way to connect your devices across the local network.</p>
+              <h2>欢迎使用 Wormhole</h2>
+              <p>一种无缝、安全、极速的局域网跨设备互通方案。</p>
               <div className="ob-spacer" />
-              <button className="btn-primary" onClick={handleNext}>Get Started <ArrowRight size={16}/></button>
+              <button className="btn-primary" onClick={handleNext}>开始使用 <ArrowRight size={16}/></button>
             </div>
           )}
 
           {step === 2 && (
             <div className="ob-step-pane">
-              <h2>Identify This Device</h2>
-              <p>Give this computer a recognizable name.</p>
+              <h2>标识此设备</h2>
+              <p>为这台电脑设置一个容易识别的名称。</p>
               <div className="pref-row" style={{marginTop: 24}}>
-                <label>Device Name</label>
+                <label>本机设备名称</label>
                 <input 
                   type="text" 
                   value={formData.device_name || ''} 
                   onChange={(e) => handleChange('device_name', e.target.value)} 
-                  placeholder="e.g. My Windows PC"
+                  placeholder="如: 我的 Windows 电脑"
                 />
               </div>
               <div className="ob-spacer" />
-              <button className="btn-primary" onClick={handleNext}>Next <ArrowRight size={16}/></button>
+              <button className="btn-primary" onClick={handleNext}>下一步 <ArrowRight size={16}/></button>
             </div>
           )}
 
           {step === 3 && (
             <div className="ob-step-pane">
-              <h2>Connect to Peer</h2>
-              <p>Enter the local IP address of the device you want to connect to.</p>
+              <h2>连接到对端设备</h2>
+              <p>输入你要连接的局域网设备的 IP 地址。</p>
               <div className="pref-row" style={{marginTop: 24}}>
-                <label>Peer IP Address</label>
+                <label>对端 IP 地址</label>
                 <input 
                   type="text" 
                   value={formData.peer_host || ''} 
                   onChange={(e) => handleChange('peer_host', e.target.value)} 
-                  placeholder="e.g. 192.168.1.180"
+                  placeholder="如: 192.168.1.180"
                 />
               </div>
               <div className="ob-spacer" />
-              <button className="btn-primary" onClick={handleNext}>Next <ArrowRight size={16}/></button>
+              <button className="btn-primary" onClick={handleNext}>下一步 <ArrowRight size={16}/></button>
             </div>
           )}
 
           {step === 4 && (
             <div className="ob-step-pane">
-              <h2>Enable Features</h2>
-              <p>Choose what you want to sync automatically.</p>
+              <h2>启用功能</h2>
+              <p>选择你想在后台自动同步的服务。</p>
               
               <div className="ob-features-list">
                 <div className="pref-row-checkbox">
                   <input type="checkbox" id="ob-cb-text" checked={formData.clipboard?.text_enabled || false} onChange={(e) => handleChange('clipboard.text_enabled', e.target.checked)} />
-                  <label htmlFor="ob-cb-text">Text Clipboard Sync</label>
+                  <label htmlFor="ob-cb-text">启用文本剪贴板同步</label>
                 </div>
                 <div className="pref-row-checkbox">
                   <input type="checkbox" id="ob-cb-img" checked={formData.clipboard?.image_enabled || false} onChange={(e) => handleChange('clipboard.image_enabled', e.target.checked)} />
-                  <label htmlFor="ob-cb-img">Image Clipboard Sync</label>
+                  <label htmlFor="ob-cb-img">启用图片剪贴板同步</label>
                 </div>
               </div>
 
               <div className="ob-spacer" />
               <button className="btn-primary" onClick={handleFinish} disabled={saving}>
-                <Check size={16}/> {saving ? 'Saving...' : 'Finish Setup'}
+                <Check size={16}/> {saving ? '正在保存...' : '完成配置'}
               </button>
             </div>
           )}

@@ -44,54 +44,54 @@ export default function PreferencePanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="pref-overlay">
-      <div className="pref-window">
+      <div className="pref-window glass-panel">
         <header className="pref-header">
-          <h2>Preferences</h2>
+          <h2>偏好设置</h2>
           <button className="icon-btn" onClick={onClose}><X size={20} /></button>
         </header>
 
         <div className="pref-body">
           <section className="pref-section">
-            <h3>Connection</h3>
+            <h3>连接设置</h3>
             <div className="pref-row">
-              <label>Device Name</label>
+              <label>本机设备名称</label>
               <input type="text" value={formData.device_name || ''} onChange={(e) => handleChange('device_name', e.target.value)} />
             </div>
             <div className="pref-row">
-              <label>Peer Host IP</label>
+              <label>对端设备 IP 地址</label>
               <input type="text" value={formData.peer_host || ''} onChange={(e) => handleChange('peer_host', e.target.value)} />
             </div>
             <div className="pref-row">
-              <label>Peer Port</label>
+              <label>对端设备端口</label>
               <input type="number" value={formData.peer_port || 53318} onChange={(e) => handleChange('peer_port', parseInt(e.target.value))} />
             </div>
           </section>
 
           <section className="pref-section">
-            <h3>File Transfer</h3>
+            <h3>文件传输</h3>
             <div className="pref-row">
-              <label>Receive Directory</label>
-              <input type="text" value={formData.receive_dir || ''} onChange={(e) => handleChange('receive_dir', e.target.value)} />
+              <label>默认接收目录</label>
+              <input type="text" value={formData.receive_dir || ''} onChange={(e) => handleChange('receive_dir', e.target.value)} placeholder="如 C:\Users\xxx\Downloads" />
             </div>
           </section>
 
           <section className="pref-section">
-            <h3>Clipboard Sync</h3>
+            <h3>剪贴板同步</h3>
             <div className="pref-row-checkbox">
               <input type="checkbox" id="cb-text" checked={formData.clipboard?.text_enabled || false} onChange={(e) => handleChange('clipboard.text_enabled', e.target.checked)} />
-              <label htmlFor="cb-text">Enable Text Sync</label>
+              <label htmlFor="cb-text">启用文本剪贴板同步</label>
             </div>
             <div className="pref-row-checkbox">
               <input type="checkbox" id="cb-img" checked={formData.clipboard?.image_enabled || false} onChange={(e) => handleChange('clipboard.image_enabled', e.target.checked)} />
-              <label htmlFor="cb-img">Enable Image Sync</label>
+              <label htmlFor="cb-img">启用图片剪贴板同步</label>
             </div>
           </section>
         </div>
 
         <footer className="pref-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-secondary" onClick={onClose}>取消</button>
           <button className="btn-primary" onClick={handleSave} disabled={saving}>
-            <Save size={16} /> {saving ? 'Saving...' : 'Save Settings'}
+            <Save size={16} /> {saving ? '保存中...' : '保存设置'}
           </button>
         </footer>
       </div>
