@@ -6,7 +6,8 @@ use std::{
 
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 use wormhole_core::{
-    AppConfig, ConnectionStatus, Event, EventLog, HistoryDb, PublicDevice, TransferTask,
+    AppConfig, ConnectionStatus, Event, EventLog, HistoryDb, LocalTransferManifest, PublicDevice,
+    TransferTask,
 };
 use wormhole_platform::SystemClipboard;
 
@@ -30,6 +31,7 @@ pub struct ReceiveTaskState {
 pub struct FailedTransfer {
     pub task_id: String,
     pub paths: Vec<PathBuf>,
+    pub manifest: LocalTransferManifest,
 }
 
 #[derive(Clone)]

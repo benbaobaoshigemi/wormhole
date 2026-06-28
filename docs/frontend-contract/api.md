@@ -6,7 +6,11 @@ Do not call `/peer/*`.
 
 Do not call `/api/*`; it has been removed.
 
-Do not read Rust source to infer behavior. Use this contract and the JSON mocks in this directory.
+Do not read Rust source, SQLite rows, config files, or debug UI code to infer behavior. Use this contract and the JSON mocks in this directory.
+
+`GET /local/state` is the only supported UI startup and recovery entrypoint. Use it when the formal frontend starts, reconnects to the daemon, resumes after sleep, or needs to reconcile missed events.
+
+`GET /local/events` is the incremental update stream. Treat it as a delta stream layered on top of `/local/state`, not as the only source of truth.
 
 ## Required Local Endpoints
 
@@ -41,3 +45,13 @@ Do not read Rust source to infer behavior. Use this contract and the JSON mocks 
 - `events`: recent event replay.
 
 No DTO contains `shared_token`, clipboard body text, PNG bytes, or sender source paths.
+
+## Retry Request
+
+`POST /local/transfer/retry` supports an explicit task id:
+
+```json
+{ "task_id": "task-20260628-001" }
+```
+
+If the body is empty, the daemon retries the most recent failed task. The formal frontend should pass `task_id` so the user action maps to the visible task row.

@@ -48,7 +48,7 @@ pub async fn connect(state: &AppState) -> Result<Json<serde_json::Value>, ApiErr
             *state.status.write().await = ConnectionStatus::PeerOffline;
             state.emit(
                 "connection.changed",
-                json!({"status":"peer_offline","error_code":"network","error":err.to_string()}),
+                json!({"status":"peer_offline","error_code":"network","error":"peer unavailable"}),
             );
             Err(ApiError::status(
                 StatusCode::SERVICE_UNAVAILABLE,

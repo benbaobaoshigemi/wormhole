@@ -23,6 +23,8 @@ There is no `/api/*` compatibility layer.
 
 Returns the complete frontend recovery state: device, connection status, peer, public settings, clipboard status, active transfer count, recent history count, task DTOs, and recent events.
 
+This is the UI startup and recovery entrypoint. It returns current in-memory task state; SQLite is only a persistence and recovery source.
+
 `GET /local/settings`
 
 Returns `PublicSettingsDto`. It never contains `shared_token`.
@@ -59,7 +61,13 @@ Body:
 
 `POST /local/transfer/retry`
 
-Retries the latest failed task while preserving the user-visible `task_id`.
+Preferred body:
+
+```json
+{ "task_id": "..." }
+```
+
+Retries that failed task while preserving the user-visible `task_id`, manifest, item count, total size, and root name. Empty body retries the most recent failed task.
 
 `GET /local/transfer/tasks`
 

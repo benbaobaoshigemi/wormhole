@@ -4,6 +4,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -13,12 +14,12 @@ use tokio::{
     sync::mpsc,
 };
 use wormhole_core::{
-    file_sha256, safe_join, scan_manifest, ConflictStrategy, LocalTransferManifest,
-    TransferDirection, TransferStatus, TransferTask, WireTransferManifest,
+    file_sha256, normalize_relative_path, safe_join, scan_manifest, ConflictStrategy,
+    LocalTransferManifest, TransferDirection, TransferStatus, TransferTask, WireTransferManifest,
 };
 
 use crate::{
-    dto::SendRequest,
+    dto::{RetryRequest, SendRequest},
     error::ApiError,
     state::{AppState, FailedTransfer, ReceiveFileState, ReceiveTaskState},
     transport::transfer_transport,
@@ -26,6 +27,7 @@ use crate::{
 
 pub const CHUNK_SIZE: usize = 256 * 1024;
 pub const MAX_CHUNK_SIZE: usize = 2 * 1024 * 1024;
+pub const MAX_MANIFEST_FILES: usize = 100_000;
 
 #[derive(Debug, Deserialize)]
 pub struct UploadQuery {
@@ -69,14 +71,39 @@ pub async fn send_transfer(
     state.emit("transfer.created", json!({"task": public_task(&task)}));
     let runner_state = state.clone();
     tokio::spawn(async move {
-        if let Err(err) = run_send_transfer(runner_state.clone(), manifest, req.paths).await {
+        if run_send_transfer(runner_state.clone(), manifest, req.paths)
+            .await
+            .is_err()
+        {
             runner_state.emit(
                 "daemon.error",
-                json!({"error_code":"internal","error":err.to_string()}),
+                json!({"error_code":"internal","error":"background transfer task failed"}),
             );
         }
     });
     Ok(Json(json!({"ok":true,"task_id":task.task_id})))
+}
+
+pub async fn restore_tasks_from_db(state: &AppState) -> Result<()> {
+    let mut restored = HashMap::new();
+    for mut task in state.db.tasks().unwrap_or_default() {
+        if matches!(
+            task.status,
+            TransferStatus::Queued
+                | TransferStatus::Prepared
+                | TransferStatus::Transferring
+                | TransferStatus::Retrying
+        ) {
+            task.status = TransferStatus::Failed;
+            task.error_code = Some("daemon_restarted".to_string());
+            task.error = Some("daemon restarted before task completed".to_string());
+            task.updated_at = Utc::now();
+            state.db.upsert_task(&task)?;
+        }
+        restored.insert(task.task_id.clone(), task);
+    }
+    *state.tasks.lock().await = restored;
+    Ok(())
 }
 
 pub async fn run_send_transfer(
@@ -108,8 +135,8 @@ pub async fn run_send_transfer(
             &state,
             &manifest.task_id,
             classify_error(&err),
-            err.to_string(),
-            paths,
+            &manifest,
+            &paths,
         )
         .await?;
         return Ok(());
@@ -135,7 +162,21 @@ pub async fn run_send_transfer(
             return Ok(());
         }
         let source_path = item.source_path.clone();
-        let sha256 = tokio::task::spawn_blocking(move || file_sha256(&source_path)).await??;
+        let sha256_result = tokio::task::spawn_blocking(move || file_sha256(&source_path)).await?;
+        let sha256 = match sha256_result {
+            Ok(sha256) => sha256,
+            Err(err) => {
+                mark_failed(
+                    &state,
+                    &manifest.task_id,
+                    classify_error(&err),
+                    &manifest,
+                    &paths,
+                )
+                .await?;
+                return Ok(());
+            }
+        };
         item.sha256 = Some(sha256.clone());
         let url = format!(
             "{base}/peer/transfer/upload-chunk/{}?path={}",
@@ -191,8 +232,8 @@ pub async fn run_send_transfer(
                 &state,
                 &manifest.task_id,
                 classify_error(&err),
-                err.to_string(),
-                vec![item.source_path.clone()],
+                &manifest,
+                &paths,
             )
             .await?;
             return Ok(());
@@ -233,6 +274,7 @@ pub async fn prepare_transfer(
     state: &AppState,
     manifest: WireTransferManifest,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    validate_wire_manifest(&manifest)?;
     let config = state.config.read().await.clone();
     fs::create_dir_all(&config.receive_dir).await?;
     let available = fs2::available_space(&config.receive_dir)?;
@@ -313,6 +355,59 @@ pub async fn prepare_transfer(
     Ok(Json(json!({"ok":true,"task_id":task.task_id})))
 }
 
+pub fn validate_wire_manifest(manifest: &WireTransferManifest) -> Result<(), ApiError> {
+    if manifest.files.is_empty() {
+        return Err(ApiError::status(
+            StatusCode::BAD_REQUEST,
+            "empty_manifest",
+            anyhow!("transfer manifest has no files"),
+        ));
+    }
+    if manifest.files.len() > MAX_MANIFEST_FILES {
+        return Err(ApiError::status(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "manifest_too_large",
+            anyhow!("transfer manifest has too many files"),
+        ));
+    }
+    let mut seen = HashSet::with_capacity(manifest.files.len());
+    let mut total = 0u64;
+    for item in &manifest.files {
+        normalize_relative_path(PathBuf::from(&item.relative_path)).map_err(|_| {
+            ApiError::status(
+                StatusCode::BAD_REQUEST,
+                "unsafe_path",
+                anyhow!("unsafe relative path"),
+            )
+        })?;
+        if !seen.insert(item.relative_path.clone()) {
+            return Err(ApiError::status(
+                StatusCode::BAD_REQUEST,
+                "duplicate_path",
+                anyhow!("duplicate relative path"),
+            ));
+        }
+        if let Some(sha256) = &item.sha256 {
+            validate_sha256(sha256)?;
+        }
+        total = total.checked_add(item.size).ok_or_else(|| {
+            ApiError::status(
+                StatusCode::BAD_REQUEST,
+                "size_overflow",
+                anyhow!("manifest total size overflow"),
+            )
+        })?;
+    }
+    if total != manifest.total_size {
+        return Err(ApiError::status(
+            StatusCode::BAD_REQUEST,
+            "total_size_mismatch",
+            anyhow!("manifest total_size does not match files"),
+        ));
+    }
+    Ok(())
+}
+
 pub async fn upload_status(
     state: &AppState,
     task_id: &str,
@@ -333,9 +428,7 @@ pub async fn upload_status(
             anyhow!("path not in manifest"),
         )
     })?;
-    if file.expected_sha256.is_none() {
-        file.expected_sha256 = query.sha256.clone();
-    }
+    bind_or_check_sha256(file, query.sha256.as_deref())?;
     if file.completed {
         return Ok(Json(
             json!({"ok":true,"complete":true,"offset":file.expected_size}),
@@ -378,11 +471,7 @@ pub async fn upload_chunk(
                 anyhow!("path not in manifest"),
             )
         })?;
-        if let Some(sha) = &query.sha256 {
-            if file.expected_sha256.is_none() {
-                file.expected_sha256 = Some(sha.clone());
-            }
-        }
+        bind_or_check_sha256(file, query.sha256.as_deref())?;
         if query.offset != file.received_size {
             return Err(ApiError::status(
                 StatusCode::CONFLICT,
@@ -436,9 +525,18 @@ pub async fn upload_chunk(
                 anyhow!("final chunk size mismatch"),
             ));
         }
+        let actual_tmp_size = std::fs::metadata(&tmp_path).map(|m| m.len()).unwrap_or(0);
+        if actual_tmp_size != expected_size {
+            return Err(ApiError::status(
+                StatusCode::BAD_REQUEST,
+                "size_mismatch",
+                anyhow!("tmp file size mismatch"),
+            ));
+        }
         if let Some(expected) = expected_sha256.as_deref() {
             if let Err(err) = verify_tmp_hash(&tmp_path, expected).await {
                 let _ = fs::remove_file(&tmp_path).await;
+                mark_receive_failed(state, task_id, "integrity").await?;
                 state.emit(
                     "transfer.failed",
                     json!({"task_id":task_id,"relative_path":relative_path,"error_code":"integrity"}),
@@ -525,18 +623,15 @@ pub async fn touch_empty_file(
     Ok(Json(json!({"ok":true,"received":0})))
 }
 
-pub async fn retry_transfer(state: AppState) -> Result<Json<serde_json::Value>, ApiError> {
-    let failed = state.failed.lock().await.pop_back().ok_or_else(|| {
-        ApiError::status(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            anyhow!("no failed transfer to retry"),
-        )
-    })?;
+pub async fn retry_transfer(
+    state: AppState,
+    req: Option<RetryRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let requested_task_id = req.and_then(|req| req.task_id);
+    let failed = pop_failed_transfer(&state, requested_task_id.as_deref()).await?;
     state.failed_task_ids.lock().await.remove(&failed.task_id);
     state.cancelled.lock().await.remove(&failed.task_id);
-    let manifest = scan_manifest(&failed.paths)?;
-    let mut task = {
+    let task = {
         let mut lock = state.tasks.lock().await;
         let task = lock.get_mut(&failed.task_id).ok_or_else(|| {
             ApiError::status(
@@ -550,6 +645,10 @@ pub async fn retry_transfer(state: AppState) -> Result<Json<serde_json::Value>, 
         task.error = None;
         task.error_code = None;
         task.transferred_size = 0;
+        task.item_count = failed.manifest.files.len();
+        task.total_size = failed.manifest.total_size;
+        task.root_name = failed.manifest.root_name.clone();
+        task.source_paths = failed.paths.clone();
         task.updated_at = Utc::now();
         state.db.upsert_task(task)?;
         task.clone()
@@ -559,13 +658,44 @@ pub async fn retry_transfer(state: AppState) -> Result<Json<serde_json::Value>, 
         json!({"task_id":failed.task_id,"retry_count":task.retry_count}),
     );
     let runner_state = state.clone();
-    let mut retry_manifest = manifest;
-    retry_manifest.task_id = failed.task_id.clone();
-    task.source_paths = failed.paths.clone();
+    let retry_manifest = build_retry_manifest(&failed);
     tokio::spawn(async move {
         let _ = run_send_transfer(runner_state, retry_manifest, failed.paths).await;
     });
     Ok(Json(json!({"ok":true,"task_id":failed.task_id})))
+}
+
+async fn pop_failed_transfer(
+    state: &AppState,
+    task_id: Option<&str>,
+) -> Result<FailedTransfer, ApiError> {
+    let mut failed = state.failed.lock().await;
+    match task_id {
+        Some(task_id) => {
+            if let Some(index) = failed.iter().position(|item| item.task_id == task_id) {
+                Ok(failed.remove(index).expect("failed queue index valid"))
+            } else {
+                Err(ApiError::status(
+                    StatusCode::NOT_FOUND,
+                    "task_not_found",
+                    anyhow!("failed task not found"),
+                ))
+            }
+        }
+        None => failed.pop_back().ok_or_else(|| {
+            ApiError::status(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                anyhow!("no failed transfer to retry"),
+            )
+        }),
+    }
+}
+
+fn build_retry_manifest(failed: &FailedTransfer) -> LocalTransferManifest {
+    let mut manifest = failed.manifest.clone();
+    manifest.task_id = failed.task_id.clone();
+    manifest
 }
 
 pub async fn cancel_transfer(
@@ -582,15 +712,16 @@ pub async fn mark_failed(
     state: &AppState,
     task_id: &str,
     error_code: String,
-    error: String,
-    paths: Vec<PathBuf>,
+    manifest: &LocalTransferManifest,
+    paths: &[PathBuf],
 ) -> Result<()> {
+    let public_error = public_error_message(&error_code);
     update_task(
         state,
         task_id,
         TransferStatus::Failed,
         Some(error_code.clone()),
-        Some(error.clone()),
+        Some(public_error.to_string()),
         0,
     )
     .await?;
@@ -598,14 +729,27 @@ pub async fn mark_failed(
     if ids.insert(task_id.to_string()) {
         state.failed.lock().await.push_back(FailedTransfer {
             task_id: task_id.to_string(),
-            paths,
+            paths: paths.to_vec(),
+            manifest: manifest.clone(),
         });
     }
     state.emit(
         "transfer.failed",
-        json!({"task_id":task_id,"error_code":error_code,"error":error}),
+        json!({"task_id":task_id,"error_code":error_code,"error":public_error}),
     );
     Ok(())
+}
+
+async fn mark_receive_failed(state: &AppState, task_id: &str, error_code: &str) -> Result<()> {
+    update_task(
+        state,
+        task_id,
+        TransferStatus::Failed,
+        Some(error_code.to_string()),
+        Some(public_error_message(error_code).to_string()),
+        task_transferred_size(state, task_id).await,
+    )
+    .await
 }
 
 async fn record_chunk_received(
@@ -731,6 +875,39 @@ fn update_speed_eta(task: &mut TransferTask) {
     };
 }
 
+fn bind_or_check_sha256(
+    file: &mut ReceiveFileState,
+    incoming: Option<&str>,
+) -> Result<(), ApiError> {
+    if let Some(incoming) = incoming {
+        validate_sha256(incoming)?;
+        match &file.expected_sha256 {
+            Some(expected) if expected != incoming => {
+                return Err(ApiError::status(
+                    StatusCode::CONFLICT,
+                    "sha256_mismatch",
+                    anyhow!("sha256 does not match prepared manifest"),
+                ));
+            }
+            Some(_) => {}
+            None => file.expected_sha256 = Some(incoming.to_string()),
+        }
+    }
+    Ok(())
+}
+
+fn validate_sha256(value: &str) -> Result<(), ApiError> {
+    if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(ApiError::status(
+            StatusCode::BAD_REQUEST,
+            "invalid_sha256",
+            anyhow!("invalid sha256"),
+        ))
+    }
+}
+
 async fn task_transferred_size(state: &AppState, task_id: &str) -> u64 {
     state
         .tasks
@@ -841,6 +1018,18 @@ pub fn classify_error(error: &anyhow::Error) -> String {
     }
 }
 
+fn public_error_message(error_code: &str) -> &'static str {
+    match error_code {
+        "auth" => "peer authentication failed",
+        "disk_space" => "not enough disk space",
+        "integrity" => "integrity check failed",
+        "path" => "invalid path",
+        "network" => "network transfer failed",
+        "daemon_restarted" => "daemon restarted before task completed",
+        _ => "transfer failed",
+    }
+}
+
 fn peer_post_json<T: serde::de::DeserializeOwned>(
     url: &str,
     body: &impl serde::Serialize,
@@ -874,7 +1063,7 @@ pub fn url_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wormhole_core::{AppConfig, ConflictStrategy};
+    use wormhole_core::{AppConfig, ConflictStrategy, WireTransferItem};
 
     #[test]
     fn locked_paths_do_not_change_after_conflict_resolution() {
@@ -898,5 +1087,112 @@ mod tests {
         assert_eq!(second, base.join("a (2).txt"));
         assert_eq!(first, base.join("a (1).txt"));
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    fn wire_manifest(files: Vec<WireTransferItem>, total_size: u64) -> WireTransferManifest {
+        WireTransferManifest {
+            task_id: "task".to_string(),
+            root_name: "root".to_string(),
+            files,
+            total_size,
+        }
+    }
+
+    #[test]
+    fn duplicate_relative_path_is_rejected() {
+        let manifest = wire_manifest(
+            vec![
+                WireTransferItem {
+                    relative_path: "a.txt".to_string(),
+                    size: 1,
+                    sha256: None,
+                },
+                WireTransferItem {
+                    relative_path: "a.txt".to_string(),
+                    size: 1,
+                    sha256: None,
+                },
+            ],
+            2,
+        );
+        let err = validate_wire_manifest(&manifest).expect_err("duplicate path must fail");
+        assert_eq!(err.code, "duplicate_path");
+    }
+
+    #[test]
+    fn total_size_mismatch_is_rejected() {
+        let manifest = wire_manifest(
+            vec![WireTransferItem {
+                relative_path: "a.txt".to_string(),
+                size: 10,
+                sha256: None,
+            }],
+            9,
+        );
+        let err = validate_wire_manifest(&manifest).expect_err("total mismatch must fail");
+        assert_eq!(err.code, "total_size_mismatch");
+    }
+
+    #[test]
+    fn unsafe_relative_path_is_rejected() {
+        let manifest = wire_manifest(
+            vec![WireTransferItem {
+                relative_path: "../a.txt".to_string(),
+                size: 1,
+                sha256: None,
+            }],
+            1,
+        );
+        let err = validate_wire_manifest(&manifest).expect_err("unsafe path must fail");
+        assert_eq!(err.code, "unsafe_path");
+    }
+
+    #[test]
+    fn sha256_mismatch_is_rejected_after_prepare_binding() {
+        let mut file = ReceiveFileState {
+            relative_path: "a.txt".to_string(),
+            expected_size: 1,
+            expected_sha256: Some("a".repeat(64)),
+            final_path: PathBuf::from("a.txt"),
+            tmp_path: PathBuf::from("a.txt.wormhole_tmp"),
+            received_size: 0,
+            completed: false,
+        };
+        let err = bind_or_check_sha256(&mut file, Some(&"b".repeat(64)))
+            .expect_err("sha mismatch must fail");
+        assert_eq!(err.code, "sha256_mismatch");
+    }
+
+    #[test]
+    fn retry_manifest_preserves_full_failed_manifest() {
+        let manifest = LocalTransferManifest {
+            task_id: "original".to_string(),
+            root_name: "two files".to_string(),
+            total_size: 30,
+            files: vec![
+                wormhole_core::LocalTransferItem {
+                    relative_path: "a.txt".to_string(),
+                    size: 10,
+                    source_path: PathBuf::from("a.txt"),
+                    sha256: None,
+                },
+                wormhole_core::LocalTransferItem {
+                    relative_path: "b.txt".to_string(),
+                    size: 20,
+                    source_path: PathBuf::from("b.txt"),
+                    sha256: None,
+                },
+            ],
+        };
+        let failed = FailedTransfer {
+            task_id: "original".to_string(),
+            paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+            manifest,
+        };
+        let retry = build_retry_manifest(&failed);
+        assert_eq!(retry.task_id, "original");
+        assert_eq!(retry.root_name, "two files");
+        assert_eq!(retry.files.len(), 2);
+        assert_eq!(retry.total_size, 30);
     }
 }
