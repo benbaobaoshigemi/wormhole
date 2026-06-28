@@ -1,0 +1,16 @@
+[package]
+name = "wormhole-desktop"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+rfd = "0.15"
+serde.workspace = true
+serde_json.workspace = true
+tao = "0.31"
+tray-icon = "0.19"
+ureq = { version = "2", features = ["json"] }
+open = "5"
+wormhole-core = { path = "../wormhole-core" }

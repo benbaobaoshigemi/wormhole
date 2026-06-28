@@ -209,7 +209,7 @@ def remote_set_png(client: paramiko.SSHClient, remote_root: str, png_bytes: byte
 
 
 def run_clipboard_validation(args: argparse.Namespace) -> int:
-    password = os.environ.get("WORMHOLE_MAC_PASSWORD")
+    password = os.environ.get("WORMHOLE_REMOTE_PASSWORD")
     if not password:
         password = getpass.getpass("macOS SSH password: ")
 

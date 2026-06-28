@@ -15,7 +15,7 @@ def main() -> int:
         return 2
     host = sys.argv[1]
     command = sys.argv[2]
-    password = os.environ.get("WORMHOLE_MAC_PASSWORD") or getpass.getpass("macOS SSH password: ")
+    password = os.environ.get("WORMHOLE_REMOTE_PASSWORD") or getpass.getpass("macOS SSH password: ")
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(hostname=host, username=REMOTE_USER, password=password, timeout=20)

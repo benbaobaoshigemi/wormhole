@@ -135,6 +135,7 @@ pub async fn run_send_transfer(
             &state,
             &manifest.task_id,
             classify_error(&err),
+            Some(err.to_string()),
             &manifest,
             &paths,
         )
@@ -170,6 +171,7 @@ pub async fn run_send_transfer(
                     &state,
                     &manifest.task_id,
                     classify_error(&err),
+                    Some(err.to_string()),
                     &manifest,
                     &paths,
                 )
@@ -232,6 +234,7 @@ pub async fn run_send_transfer(
                 &state,
                 &manifest.task_id,
                 classify_error(&err),
+                Some(err.to_string()),
                 &manifest,
                 &paths,
             )
@@ -712,16 +715,21 @@ pub async fn mark_failed(
     state: &AppState,
     task_id: &str,
     error_code: String,
+    detail: Option<String>,
     manifest: &LocalTransferManifest,
     paths: &[PathBuf],
 ) -> Result<()> {
     let public_error = public_error_message(&error_code);
+    let message = detail
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| format!("{public_error}: {value}"))
+        .unwrap_or_else(|| public_error.to_string());
     update_task(
         state,
         task_id,
         TransferStatus::Failed,
         Some(error_code.clone()),
-        Some(public_error.to_string()),
+        Some(message.clone()),
         0,
     )
     .await?;
@@ -735,7 +743,7 @@ pub async fn mark_failed(
     }
     state.emit(
         "transfer.failed",
-        json!({"task_id":task_id,"error_code":error_code,"error":public_error}),
+        json!({"task_id":task_id,"error_code":error_code,"error":message}),
     );
     Ok(())
 }
@@ -1073,7 +1081,7 @@ mod tests {
         std::fs::write(base.join("a.txt"), b"exists").expect("seed conflict");
         let mut config = AppConfig::default_at(
             &base.join("config.json"),
-            53317,
+            53_000 + 317,
             "127.0.0.1".to_string(),
             53318,
         )

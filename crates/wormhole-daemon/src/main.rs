@@ -9,11 +9,12 @@ use axum::{
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     net::SocketAddr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 use wormhole_core::{AppConfig, ConnectionStatus, EventLog, HistoryDb};
 use wormhole_platform::SystemClipboard;
 
@@ -140,12 +141,20 @@ fn build_router(state: AppState) -> Router {
             post(api::peer::receive_image_chunk),
         );
 
-    Router::new()
-        .route("/", get(index))
+    let router = Router::new()
         .nest("/local", local_routes)
         .nest("/peer", peer_routes)
         .layer(cors_layer())
-        .with_state(state)
+        .with_state(state);
+
+    if let Some(web_dir) = control_center_dir() {
+        tracing::info!("serving browser control center from {}", web_dir.display());
+        router.fallback_service(
+            ServeDir::new(&web_dir).fallback(ServeFile::new(web_dir.join("index.html"))),
+        )
+    } else {
+        router.fallback(get(missing_control_center))
+    }
 }
 
 fn cors_layer() -> CorsLayer {
@@ -165,8 +174,35 @@ fn cors_layer() -> CorsLayer {
         .allow_headers(AllowHeaders::list([header::CONTENT_TYPE]))
 }
 
-async fn index() -> Html<&'static str> {
-    Html(include_str!("../../../apps/desktop-ui/index.html"))
+async fn missing_control_center() -> Html<&'static str> {
+    Html(
+        r#"<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><title>Wormhole</title></head>
+  <body style="font-family: system-ui; padding: 32px">
+    <h1>Wormhole control center is not built</h1>
+    <p>Run the product build script or set WORMHOLE_WEB_DIR to a built desktop-ui dist directory.</p>
+  </body>
+</html>"#,
+    )
+}
+
+fn control_center_dir() -> Option<PathBuf> {
+    let candidates = [
+        std::env::var_os("WORMHOLE_WEB_DIR").map(PathBuf::from),
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.join("web"))),
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/desktop-ui/dist")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|path| is_built_control_center(path))
+}
+
+fn is_built_control_center(path: &Path) -> bool {
+    path.is_dir() && path.join("index.html").is_file()
 }
 
 fn parse_args() -> Result<ServeArgs> {

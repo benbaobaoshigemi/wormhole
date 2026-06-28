@@ -167,7 +167,7 @@ def assert_ok(name: str, condition: bool, details: str = "") -> dict:
 
 
 def run_link_validation(args: argparse.Namespace) -> int:
-    password = os.environ.get("WORMHOLE_MAC_PASSWORD")
+    password = os.environ.get("WORMHOLE_REMOTE_PASSWORD")
     if not password:
         password = getpass.getpass("macOS SSH password: ")
 

@@ -30,6 +30,13 @@ def local_ip_for(host: str) -> str:
 def make_source_package(package: pathlib.Path) -> None:
     if package.exists():
         package.unlink()
+    ignored_parts = {
+        "node_modules",
+        "target",
+        "target.bak",
+        ".git",
+        "__pycache__",
+    }
     allow_dirs = ["crates", "apps", "scripts", "_verification_scripts"]
     allow_files = ["Cargo.toml", "Cargo.lock", "project.md", "AGENTS.md"]
     with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
@@ -42,6 +49,11 @@ def make_source_package(package: pathlib.Path) -> None:
             if not root.exists():
                 continue
             for path in root.rglob("*"):
+                rel = path.relative_to(ROOT)
+                if any(part in ignored_parts for part in rel.parts):
+                    continue
+                if path.suffix == ".bak":
+                    continue
                 if path.is_file():
                     zf.write(path, path.relative_to(ROOT).as_posix())
         mac_config = ROOT / ".wormhole" / "macos" / "config.json"
@@ -81,7 +93,7 @@ def main() -> int:
     import paramiko
 
     host = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.180"
-    password = os.environ.get("WORMHOLE_MAC_PASSWORD") or getpass.getpass("macOS SSH password: ")
+    password = os.environ.get("WORMHOLE_REMOTE_PASSWORD") or getpass.getpass("macOS SSH password: ")
     local_ip = local_ip_for(host)
     mac_config_path = ROOT / ".wormhole" / "macos" / "config.json"
     win_config_path = ROOT / ".wormhole" / "windows" / "config.json"
@@ -112,8 +124,31 @@ def main() -> int:
         commands = [
             f"cd '{REMOTE_ROOT}' && ditto -x -k '.wormhole/wormhole-mvp-source.zip' '{REMOTE_ROOT}'",
             "command -v cargo >/dev/null 2>&1 || (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal)",
-            f"cd '{REMOTE_ROOT}' && PATH=\"$HOME/.cargo/bin:$PATH\" CARGO_HTTP_TIMEOUT=600 CARGO_HTTP_LOW_SPEED_LIMIT=1 cargo build --release -p wormhole-daemon -p wormhole-cli",
+            f"cd '{REMOTE_ROOT}' && PATH=\"$HOME/.cargo/bin:$PATH\" CARGO_HTTP_TIMEOUT=600 CARGO_HTTP_LOW_SPEED_LIMIT=1 cargo build --release -p wormhole-daemon -p wormhole-cli -p wormhole-desktop",
             f"mkdir -p '{REMOTE_ROOT}/.wormhole/macos/received' '{REMOTE_ROOT}/.wormhole/macos/data'",
+            (
+                f"cd '{REMOTE_ROOT}' && rm -rf target/product/macos/Wormhole.app && "
+                "mkdir -p target/product/macos/Wormhole.app/Contents/MacOS "
+                "target/product/macos/Wormhole.app/Contents/MacOS/config "
+                "target/product/macos/Wormhole.app/Contents/Resources/web "
+                "target/product/macos/Wormhole.app/Contents/Resources/config && "
+                "cp target/release/wormhole-desktop target/product/macos/Wormhole.app/Contents/MacOS/Wormhole && "
+                "cp target/release/wormhole-daemon target/product/macos/Wormhole.app/Contents/MacOS/wormhole-daemon && "
+                "cp .wormhole/macos/config.json target/product/macos/Wormhole.app/Contents/MacOS/config/config.json && "
+                "cp -R apps/desktop-ui/dist/. target/product/macos/Wormhole.app/Contents/MacOS/web/ && "
+                "cp -R apps/desktop-ui/dist/. target/product/macos/Wormhole.app/Contents/Resources/web/ && "
+                "cat > target/product/macos/Wormhole.app/Contents/Info.plist <<'PLIST'\n"
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+                "<plist version=\"1.0\"><dict>\n"
+                "<key>CFBundleExecutable</key><string>Wormhole</string>\n"
+                "<key>CFBundleIdentifier</key><string>dev.wormhole.desktop</string>\n"
+                "<key>CFBundleName</key><string>Wormhole</string>\n"
+                "<key>CFBundlePackageType</key><string>APPL</string>\n"
+                "<key>CFBundleShortVersionString</key><string>0.1.0</string>\n"
+                "</dict></plist>\n"
+                "PLIST"
+            ),
         ]
         for command in commands:
             _, stdout, stderr = client.exec_command(command)

@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn refused_prepare_does_not_upload_chunks() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake peer");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test peer");
         listener
             .set_nonblocking(true)
             .expect("set listener nonblocking");
@@ -165,7 +165,7 @@ mod tests {
         )
         .expect("post png chunks");
         stop.store(true, Ordering::SeqCst);
-        handle.join().expect("fake peer thread");
+        handle.join().expect("test peer thread");
 
         match outcome {
             ClipboardUploadOutcome::Ignored { reason } => {

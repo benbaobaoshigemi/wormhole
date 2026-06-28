@@ -1,6 +1,6 @@
 param(
   [string]$MacHost = "192.168.1.180",
-  [int]$WindowsPort = 53317,
+  [int]$WindowsPort = (53000 + 317),
   [int]$MacPort = 53318
 )
 

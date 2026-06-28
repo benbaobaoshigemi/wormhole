@@ -265,7 +265,10 @@ pub async fn receive_image_chunk(
             anyhow!("clipboard image offset mismatch"),
         ));
     }
-    let current_len = fs::metadata(&prepared.tmp_path).await.map(|m| m.len()).unwrap_or(0);
+    let current_len = fs::metadata(&prepared.tmp_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
     if current_len != prepared.received_size {
         return Err(ApiError::status(
             StatusCode::CONFLICT,

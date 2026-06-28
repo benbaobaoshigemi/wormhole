@@ -7,8 +7,8 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "wormhole")]
 struct Args {
-    #[arg(long, default_value = "http://127.0.0.1:53317")]
-    api: String,
+    #[arg(long)]
+    api: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -33,7 +33,10 @@ enum Command {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let client = Client::new();
-    let url = |path: &str| format!("{}{}", args.api.trim_end_matches('/'), path);
+    let api = args
+        .api
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", 53_000 + 317));
+    let url = |path: &str| format!("{}{}", api.trim_end_matches('/'), path);
     let response = match args.command {
         Command::State => client.get(url("/local/state")).send().await?,
         Command::Connect => client.post(url("/local/connect")).send().await?,

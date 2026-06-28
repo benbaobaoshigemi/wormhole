@@ -3,6 +3,7 @@ members = [
   "crates/wormhole-core",
   "crates/wormhole-platform",
   "crates/wormhole-daemon",
+  "crates/wormhole-desktop",
   "crates/wormhole-cli",
 ]
 resolver = "2"
