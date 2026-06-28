@@ -169,7 +169,7 @@ pub async fn prepare_image_clipboard(
     let dir = config.data_dir.join("clipboard");
     fs::create_dir_all(&dir).await?;
     let tmp = clipboard_tmp_path(&config.data_dir, &req.hash);
-    let mut offset = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+    let mut offset = fs::metadata(&tmp).await.map(|m| m.len()).unwrap_or(0);
     if offset > req.size {
         let _ = fs::remove_file(&tmp).await;
         offset = 0;
@@ -179,7 +179,9 @@ pub async fn prepare_image_clipboard(
         .append(true)
         .open(&tmp)
         .await?;
-    offset = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+    if offset > 0 {
+        offset = fs::metadata(&tmp).await.map(|m| m.len()).unwrap_or(0);
+    }
 
     let key = prepared_image_key(&req.source_device_id, &req.hash);
     state.prepared_images.lock().await.insert(
@@ -263,9 +265,7 @@ pub async fn receive_image_chunk(
             anyhow!("clipboard image offset mismatch"),
         ));
     }
-    let current_len = std::fs::metadata(&prepared.tmp_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let current_len = fs::metadata(&prepared.tmp_path).await.map(|m| m.len()).unwrap_or(0);
     if current_len != prepared.received_size {
         return Err(ApiError::status(
             StatusCode::CONFLICT,
@@ -374,9 +374,12 @@ pub async fn clipboard_loop(state: AppState) {
             let read = state.clipboard.lock().await.read_text();
             if let Ok(Some(text)) = read {
                 let hash = ClipboardPayload::hash_text(&text);
-                if hash != last_text && !is_remote_hash(&state, &hash).await {
+                if hash != last_text {
+                    let is_remote = is_remote_hash(&state, &hash).await;
                     last_text = hash.clone();
-                    let _ = send_text_to_peer(&state, text, hash).await;
+                    if !is_remote {
+                        let _ = send_text_to_peer(&state, text, hash).await;
+                    }
                 }
             }
         }
@@ -384,9 +387,12 @@ pub async fn clipboard_loop(state: AppState) {
             let read = state.clipboard.lock().await.read_png();
             if let Ok(Some(png)) = read {
                 let hash = ClipboardPayload::hash_bytes(&png);
-                if hash != last_image && !is_remote_hash(&state, &hash).await {
-                    last_image = hash;
-                    let _ = send_png_to_peer(&state, png).await;
+                if hash != last_image {
+                    let is_remote = is_remote_hash(&state, &hash).await;
+                    last_image = hash.clone();
+                    if !is_remote {
+                        let _ = send_png_to_peer(&state, png).await;
+                    }
                 }
             }
         }
