@@ -1,0 +1,25 @@
+[package]
+name = "wormhole-daemon"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+axum.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+fs2.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ureq = { version = "2", features = ["json"] }
+uuid.workspace = true
+wormhole-core = { path = "../wormhole-core" }
+wormhole-platform = { path = "../wormhole-platform" }

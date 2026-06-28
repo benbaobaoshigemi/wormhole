@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wormhole Link</title>
+  <style>
+    :root { color-scheme: light dark; font-family: "Segoe UI", system-ui, sans-serif; }
+    body { margin: 0; background: #f4f6f8; color: #17202a; }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 0; }
+    h1 { font-size: 28px; margin: 0; letter-spacing: 0; }
+    h2 { font-size: 17px; margin: 0 0 12px; }
+    section { background: #fff; border: 1px solid #d8dee6; border-radius: 8px; padding: 16px; margin: 14px 0; }
+    button, input { font: inherit; border-radius: 6px; border: 1px solid #b8c2cc; padding: 9px 12px; }
+    button { background: #165dff; color: white; border-color: #165dff; cursor: pointer; }
+    button.secondary { background: #fff; color: #17202a; border-color: #b8c2cc; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+    .status { font-weight: 700; }
+    .muted { color: #667085; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .path { flex: 1; min-width: 280px; }
+    .task { border-top: 1px solid #edf0f3; padding: 10px 0; }
+    progress { width: 100%; height: 12px; }
+    pre { white-space: pre-wrap; max-height: 260px; overflow: auto; background: #111827; color: #d1fae5; padding: 12px; border-radius: 8px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111827; color: #e5e7eb; }
+      section { background: #1f2937; border-color: #374151; }
+      button.secondary, input { background: #111827; color: #e5e7eb; border-color: #4b5563; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Wormhole Link</h1>
+        <div class="muted">两台电脑之间的文件穿越和剪贴板互通</div>
+      </div>
+      <button onclick="connectPeer()">连接对端</button>
+    </header>
+
+    <section class="grid">
+      <div>
+        <h2>连接</h2>
+        <div>状态：<span id="status" class="status">加载中</span></div>
+        <div>本机：<span id="device">-</span></div>
+        <div>对端：<span id="peer">-</span></div>
+      </div>
+      <div>
+        <h2>剪贴板</h2>
+        <div>状态：<span id="clipboard">-</span></div>
+        <div class="row" style="margin-top:10px">
+          <button onclick="clipEnable()">开启</button>
+          <button class="secondary" onclick="clipDisable()">关闭</button>
+          <button class="secondary" onclick="sendTextClipboard()">发送当前文本</button>
+          <button class="secondary" onclick="sendImageClipboard()">发送当前图片</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>发送文件 / 文件夹</h2>
+      <div class="row">
+        <input id="pathInput" class="path" placeholder="输入本机绝对路径，可用 ; 分隔多个路径" />
+        <button onclick="sendPaths()">发送</button>
+        <button class="secondary" onclick="retry()">重试失败任务</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>传输任务</h2>
+      <div id="tasks"></div>
+    </section>
+
+    <section>
+      <h2>事件</h2>
+      <pre id="events"></pre>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const events = [];
+    async function api(path, options = {}) {
+      const response = await fetch(path, { headers: { "content-type": "application/json" }, ...options });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      return data;
+    }
+    async function refresh() {
+      const state = await api("/api/state");
+      $("status").textContent = state.status;
+      $("device").textContent = `${state.device.device_name} · ${state.device.platform} · :${state.device.port}`;
+      $("peer").textContent = state.peer ? `${state.peer.device_name} · ${state.peer.platform}` : `${state.settings.peer.host}:${state.settings.peer.port}`;
+      $("clipboard").textContent = state.settings.clipboard.enabled ? "已开启" : "已关闭";
+      const tasks = await api("/api/transfer/tasks");
+      $("tasks").innerHTML = tasks.map(t => {
+        const pct = t.total_size ? Math.round((t.transferred_size / t.total_size) * 100) : 0;
+        return `<div class="task"><b>${t.root_name}</b><div class="muted">${t.direction} · ${t.status} · ${t.item_count} 项 · ${t.total_size} bytes</div><progress value="${pct}" max="100"></progress><div>${pct}% ${t.error || ""}</div></div>`;
+      }).join("") || "<div class='muted'>暂无任务</div>";
+    }
+    async function connectPeer() { await api("/api/connect", { method: "POST" }).catch(alert); refresh(); }
+    async function sendPaths() {
+      const paths = $("pathInput").value.split(";").map(s => s.trim()).filter(Boolean);
+      await api("/api/transfer/send", { method: "POST", body: JSON.stringify({ paths }) }).catch(alert);
+      refresh();
+    }
+    async function retry() { await api("/api/transfer/retry", { method: "POST" }).catch(alert); refresh(); }
+    async function clipEnable() { await api("/api/clipboard/enable", { method: "POST" }).catch(alert); refresh(); }
+    async function clipDisable() { await api("/api/clipboard/disable", { method: "POST" }).catch(alert); refresh(); }
+    async function sendTextClipboard() { await api("/api/clipboard/system/read-send-text", { method: "POST" }).catch(alert); }
+    async function sendImageClipboard() { await api("/api/clipboard/system/read-send-image", { method: "POST" }).catch(alert); }
+    const es = new EventSource("/api/events");
+    es.onmessage = (msg) => {
+      events.push(msg.data);
+      while (events.length > 80) events.shift();
+      $("events").textContent = events.join("\n");
+      refresh();
+    };
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>
+
