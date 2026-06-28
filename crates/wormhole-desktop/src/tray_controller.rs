@@ -1,7 +1,11 @@
 use anyhow::Result;
 use std::time::{Duration, Instant};
-use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
+use tao::{
+    dpi::LogicalSize,
+    event::{Event, StartCause, WindowEvent},
+    window::{Window, WindowBuilder},
+};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, TrayIconBuilder,
@@ -19,6 +23,7 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
     let status_item = MenuItem::new("状态：读取中", false, None);
     let peer_item = MenuItem::new("对端：-", false, None);
     let open_center = MenuItem::new("打开控制中心", true, None);
+    let open_drop_window = MenuItem::new("打开拖拽发送窗口", true, None);
     let send_file = MenuItem::new("发送文件", true, None);
     let send_folder = MenuItem::new("发送文件夹", true, None);
     let open_receive = MenuItem::new("打开接收目录", true, None);
@@ -33,6 +38,7 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
         &peer_item,
         &PredefinedMenuItem::separator(),
         &open_center,
+        &open_drop_window,
         &send_file,
         &send_folder,
         &open_receive,
@@ -53,12 +59,13 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
 
     let menu_channel = MenuEvent::receiver();
     let mut last_state_refresh = Instant::now() - Duration::from_secs(60);
+    let mut drop_window: Option<Window> = None;
 
     let client = daemon.client();
     let control_center_url = daemon.control_center_url();
     browser_open::open_control_center(&control_center_url).ok();
 
-    event_loop.run(move |event, _, control_flow| {
+    event_loop.run(move |event, event_loop_target, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(250));
 
         if matches!(
@@ -85,10 +92,43 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
             }
         }
 
+        if let Event::WindowEvent {
+            event, window_id, ..
+        } = &event
+        {
+            if drop_window
+                .as_ref()
+                .map(|window| window.id() == *window_id)
+                .unwrap_or(false)
+            {
+                match event {
+                    WindowEvent::DroppedFile(path) => {
+                        let _ = client.send_paths(&[path.clone()]);
+                    }
+                    WindowEvent::CloseRequested => {
+                        drop_window = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         while let Ok(event) = menu_channel.try_recv() {
             let id = event.id;
             if id == open_center.id() {
                 let _ = browser_open::open_control_center(&control_center_url);
+            } else if id == open_drop_window.id() {
+                match &drop_window {
+                    Some(window) => {
+                        window.set_visible(true);
+                        window.set_focus();
+                    }
+                    None => {
+                        if let Ok(window) = create_drop_window(event_loop_target) {
+                            drop_window = Some(window);
+                        }
+                    }
+                }
             } else if id == send_file.id() {
                 if let Some(paths) = pick_files() {
                     let _ = client.send_paths(&paths);
@@ -119,19 +159,22 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
     });
 }
 
+fn create_drop_window<T>(event_loop: &tao::event_loop::EventLoopWindowTarget<T>) -> Result<Window> {
+    let window = WindowBuilder::new()
+        .with_title("拖到这里发送到 Wormhole")
+        .with_inner_size(LogicalSize::new(380.0, 180.0))
+        .with_resizable(false)
+        .with_always_on_top(true)
+        .build(event_loop)?;
+    window.set_visible(true);
+    window.set_focus();
+    Ok(window)
+}
+
 fn wormhole_icon() -> Result<Icon> {
-    let mut rgba = Vec::with_capacity(16 * 16 * 4);
-    for y in 0..16 {
-        for x in 0..16 {
-            let dx = x as i32 - 8;
-            let dy = y as i32 - 8;
-            let inside = dx * dx + dy * dy <= 49;
-            if inside {
-                rgba.extend_from_slice(&[20, 61, 107, 255]);
-            } else {
-                rgba.extend_from_slice(&[0, 0, 0, 0]);
-            }
-        }
-    }
-    Ok(Icon::from_rgba(rgba, 16, 16)?)
+    let image =
+        image::load_from_memory(include_bytes!("../../../assets/wormhole/wormhole-tray.png"))?
+            .into_rgba8();
+    let (width, height) = image.dimensions();
+    Ok(Icon::from_rgba(image.into_raw(), width, height)?)
 }

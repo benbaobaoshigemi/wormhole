@@ -110,6 +110,7 @@ h2 { font-size: 17px; letter-spacing: 0; }
 .transfer-card { display: grid; gap: 12px; opacity: .86; }
 .transfer-card.active { opacity: 1; border-color: #9cc8f5; }
 .transfer-meta { display: flex; justify-content: space-between; color: #657080; font-size: 13px; gap: 8px; flex-wrap: wrap; }
+.muted-line { color: #657080; font-size: 13px; overflow-wrap: anywhere; }
 .progress-track { height: 8px; border-radius: 999px; background: #e8edf3; overflow: hidden; }
 .progress-track div { height: 100%; background: #1f6fb8; border-radius: inherit; }
 .card-actions { display: flex; gap: 8px; }

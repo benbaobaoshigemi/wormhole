@@ -75,7 +75,7 @@ pub struct TransferSettings {
 impl Default for TransferSettings {
     fn default() -> Self {
         Self {
-            max_concurrent_tasks: 1,
+            max_concurrent_tasks: 2,
             conflict_strategy: ConflictStrategy::Rename,
             min_free_space_bytes: 64 * 1024 * 1024,
             verify_hash: true,
@@ -288,6 +288,14 @@ pub struct TransferTask {
     pub parent_task_id: Option<String>,
     #[serde(default)]
     pub attempt_id: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub current_file: Option<String>,
+    #[serde(default)]
+    pub preflight_bytes: u64,
+    #[serde(default)]
+    pub preflight_total_bytes: u64,
 }
 
 impl TransferTask {
@@ -313,6 +321,10 @@ impl TransferTask {
             source_paths: paths,
             parent_task_id: None,
             attempt_id: None,
+            phase: None,
+            current_file: None,
+            preflight_bytes: 0,
+            preflight_total_bytes: 0,
         }
     }
 }
@@ -561,6 +573,13 @@ pub fn hex_hash(bytes: &[u8]) -> String {
 }
 
 pub fn file_sha256(path: &Path) -> Result<String> {
+    file_sha256_with_progress(path, |_| Ok(()))
+}
+
+pub fn file_sha256_with_progress(
+    path: &Path,
+    mut on_progress: impl FnMut(u64) -> Result<()>,
+) -> Result<String> {
     let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 1024 * 1024];
@@ -570,6 +589,7 @@ pub fn file_sha256(path: &Path) -> Result<String> {
             break;
         }
         hasher.update(&buf[..n]);
+        on_progress(n as u64)?;
     }
     Ok(format!("{:x}", hasher.finalize()))
 }

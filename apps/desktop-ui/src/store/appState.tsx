@@ -118,7 +118,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           const next = event.data.settings as PublicSettingsDto | undefined;
           if (next) setSettings(next);
         }
-        if (event.type === "transfer.progress") {
+        if (event.type === "transfer.progress" || event.type === "transfer.phase") {
           setTasks((current) => mergeTask(current, event.data as Partial<TransferTaskDto>));
         }
         if (

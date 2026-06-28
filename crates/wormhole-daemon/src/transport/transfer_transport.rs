@@ -4,6 +4,7 @@ use std::{
     fs::File as StdFile,
     io::{Read, Seek, SeekFrom},
     path::Path,
+    thread,
     time::Duration,
 };
 
@@ -52,11 +53,13 @@ pub fn upload_file_chunks(
 }
 
 fn get_json_auth<T: serde::de::DeserializeOwned>(url: &str, token: Option<&str>) -> Result<T> {
-    let mut request = ureq::get(url).timeout(Duration::from_secs(30));
-    if let Some(token) = token {
-        request = request.set("x-wormhole-token", token);
-    }
-    Ok(request.call()?.into_json()?)
+    retry_peer_io(|| {
+        let mut request = ureq::get(url).timeout(Duration::from_secs(30));
+        if let Some(token) = token {
+            request = request.set("x-wormhole-token", token);
+        }
+        Ok(request.call()?.into_json()?)
+    })
 }
 
 fn post_chunk(
@@ -68,8 +71,13 @@ fn post_chunk(
 ) -> Result<()> {
     let sep = if base_url.contains('?') { "&" } else { "?" };
     let url = format!("{base_url}{sep}final_chunk={final_chunk}&offset={offset}");
+    let timeout = if final_chunk {
+        Duration::from_secs(600)
+    } else {
+        Duration::from_secs(45)
+    };
     let mut request = ureq::post(&url)
-        .timeout(Duration::from_secs(30))
+        .timeout(timeout)
         .set("content-type", "application/octet-stream");
     if let Some(token) = token {
         request = request.set("x-wormhole-token", token);
@@ -80,12 +88,30 @@ fn post_chunk(
 
 fn touch_empty(base_url: &str, token: Option<&str>) -> Result<()> {
     let url = base_url.replace("/peer/transfer/upload-chunk/", "/peer/transfer/touch/");
-    let mut request = ureq::post(&url).timeout(Duration::from_secs(30));
-    if let Some(token) = token {
-        request = request.set("x-wormhole-token", token);
+    retry_peer_io(|| {
+        let mut request = ureq::post(&url).timeout(Duration::from_secs(45));
+        if let Some(token) = token {
+            request = request.set("x-wormhole-token", token);
+        }
+        request.call()?;
+        Ok(())
+    })
+}
+
+fn retry_peer_io<T>(mut op: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut last_error = None;
+    for attempt in 0..3 {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(err) => {
+                last_error = Some(err);
+                if attempt < 2 {
+                    thread::sleep(Duration::from_millis(150 * (attempt + 1) as u64));
+                }
+            }
+        }
     }
-    request.call()?;
-    Ok(())
+    Err(last_error.expect("retry loop must record an error"))
 }
 
 fn append_optional_param(url: &str, key: &str, value: Option<&str>) -> String {

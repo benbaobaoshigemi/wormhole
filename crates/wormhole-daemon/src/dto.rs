@@ -65,6 +65,10 @@ pub struct TransferTaskDto {
     pub retry_count: u32,
     pub parent_task_id: Option<String>,
     pub attempt_id: Option<String>,
+    pub phase: Option<String>,
+    pub current_file: Option<String>,
+    pub preflight_bytes: u64,
+    pub preflight_total_bytes: u64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -91,6 +95,10 @@ impl From<&TransferTask> for TransferTaskDto {
             retry_count: task.retry_count,
             parent_task_id: task.parent_task_id.clone(),
             attempt_id: task.attempt_id.clone(),
+            phase: task.phase.clone(),
+            current_file: task.current_file.clone(),
+            preflight_bytes: task.preflight_bytes,
+            preflight_total_bytes: task.preflight_total_bytes,
             created_at: task.created_at,
             updated_at: task.updated_at,
         }

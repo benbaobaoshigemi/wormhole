@@ -20,6 +20,7 @@ rm -rf "$APP"
 mkdir -p "$MACOS/config" "$RESOURCES/web" "$RESOURCES/config"
 cp "$ROOT/target/release/wormhole-desktop" "$MACOS/Wormhole"
 cp "$ROOT/target/release/wormhole-daemon" "$MACOS/wormhole-daemon"
+cp "$ROOT/assets/wormhole/Wormhole.icns" "$RESOURCES/Wormhole.icns"
 cp -R "$UI_DIR/dist/." "$RESOURCES/web/"
 cp -R "$UI_DIR/dist/." "$MACOS/web/"
 if [ -f "$ROOT/.wormhole/macos/config.json" ]; then
@@ -33,6 +34,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundleExecutable</key><string>Wormhole</string>
   <key>CFBundleIdentifier</key><string>dev.wormhole.desktop</string>
   <key>CFBundleName</key><string>Wormhole</string>
+  <key>CFBundleIconFile</key><string>Wormhole.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>NSLocalNetworkUsageDescription</key><string>Wormhole needs local network access to connect to the paired computer and transfer files and clipboard data.</string>
@@ -43,4 +45,9 @@ PLIST
 
 codesign --force --deep --sign - "$APP"
 
+DESKTOP_APP="$HOME/Desktop/Wormhole.app"
+rm -f "$DESKTOP_APP"
+ln -s "$APP" "$DESKTOP_APP"
+
 echo "Wormhole product output: $APP"
+echo "Desktop app shortcut: $DESKTOP_APP"

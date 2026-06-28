@@ -14,9 +14,23 @@ function percent(task: TransferTaskDto) {
   return Math.min(100, Math.round((task.transferred_size / task.total_size) * 100));
 }
 
+function phaseLabel(task: TransferTaskDto) {
+  if (task.phase === "hashing") {
+    const total = task.preflight_total_bytes ?? 0;
+    const done = task.preflight_bytes ?? 0;
+    const progress = total > 0 ? ` ${Math.min(100, Math.round((done / total) * 100))}%` : "";
+    return `校验发送内容${progress}`;
+  }
+  if (task.phase === "verifying") return "接收端正在校验";
+  if (task.phase === "uploading") return "正在发送";
+  if (task.status === "prepared") return "等待发送端开始传输";
+  return task.status;
+}
+
 export default function TransferCard({ task, onChanged }: { task: TransferTaskDto; onChanged: () => void }) {
   const active = ["queued", "prepared", "transferring", "retrying"].includes(task.status);
   const progress = percent(task);
+  const visiblePhase = phaseLabel(task);
   return (
     <article className={`transfer-card ${active ? "active" : ""} ${task.status}`}>
       <div className="transfer-head">
@@ -24,7 +38,7 @@ export default function TransferCard({ task, onChanged }: { task: TransferTaskDt
           <strong>{task.root_name}</strong>
           <p>{task.direction === "send" ? "本机 -> 对端" : "对端 -> 本机"} · {task.item_count} 项 · {bytes(task.total_size)}</p>
         </div>
-        <span className={`badge ${task.status}`}>{task.status}</span>
+        <span className={`badge ${task.status}`}>{visiblePhase}</span>
       </div>
       <div className="progress-track"><div style={{ width: `${progress}%` }} /></div>
       <div className="transfer-meta">
@@ -32,6 +46,7 @@ export default function TransferCard({ task, onChanged }: { task: TransferTaskDt
         <span>{bytes(task.speed_bytes_per_sec)}/s</span>
         <span>{task.eta_seconds ? `${task.eta_seconds}s` : "ETA -"}</span>
       </div>
+      {task.current_file && <p className="muted-line">{task.current_file}</p>}
       {task.error && <p className="error-text">{task.error}</p>}
       <div className="card-actions">
         {active && (

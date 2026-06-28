@@ -14,8 +14,9 @@ use tokio::{
     sync::mpsc,
 };
 use wormhole_core::{
-    file_sha256, normalize_relative_path, safe_join, scan_manifest, ConflictStrategy,
-    LocalTransferManifest, TransferDirection, TransferStatus, TransferTask, WireTransferManifest,
+    file_sha256, file_sha256_with_progress, normalize_relative_path, safe_join, scan_manifest,
+    ConflictStrategy, LocalTransferManifest, TransferDirection, TransferStatus, TransferTask,
+    WireTransferManifest,
 };
 
 use crate::{
@@ -25,7 +26,7 @@ use crate::{
     transport::transfer_transport,
 };
 
-pub const CHUNK_SIZE: usize = 256 * 1024;
+pub const CHUNK_SIZE: usize = 1024 * 1024;
 pub const MAX_CHUNK_SIZE: usize = 2 * 1024 * 1024;
 pub const MAX_MANIFEST_FILES: usize = 100_000;
 
@@ -163,7 +164,45 @@ pub async fn run_send_transfer(
             return Ok(());
         }
         let source_path = item.source_path.clone();
-        let sha256_result = tokio::task::spawn_blocking(move || file_sha256(&source_path)).await?;
+        let relative_path = item.relative_path.clone();
+        set_task_phase(
+            &state,
+            &manifest.task_id,
+            "hashing",
+            Some(relative_path.clone()),
+            0,
+            item.size,
+        )
+        .await?;
+        let (hash_tx, mut hash_rx) = mpsc::unbounded_channel::<u64>();
+        let sha256_handle = tokio::task::spawn_blocking(move || {
+            file_sha256_with_progress(&source_path, |delta| {
+                let _ = hash_tx.send(delta);
+                Ok(())
+            })
+        });
+        let mut hashed = 0u64;
+        loop {
+            if sha256_handle.is_finished() {
+                break;
+            }
+            match tokio::time::timeout(Duration::from_millis(100), hash_rx.recv()).await {
+                Ok(Some(delta)) => {
+                    hashed = hashed.saturating_add(delta).min(item.size);
+                    set_task_phase(
+                        &state,
+                        &manifest.task_id,
+                        "hashing",
+                        Some(relative_path.clone()),
+                        hashed,
+                        item.size,
+                    )
+                    .await?;
+                }
+                Ok(None) | Err(_) => {}
+            }
+        }
+        let sha256_result = sha256_handle.await?;
         let sha256 = match sha256_result {
             Ok(sha256) => sha256,
             Err(err) => {
@@ -179,6 +218,18 @@ pub async fn run_send_transfer(
                 return Ok(());
             }
         };
+        while let Ok(delta) = hash_rx.try_recv() {
+            hashed = hashed.saturating_add(delta).min(item.size);
+        }
+        set_task_phase(
+            &state,
+            &manifest.task_id,
+            "uploading",
+            Some(relative_path.clone()),
+            hashed,
+            item.size,
+        )
+        .await?;
         item.sha256 = Some(sha256.clone());
         let url = format!(
             "{base}/peer/transfer/upload-chunk/{}?path={}",
@@ -347,6 +398,10 @@ pub async fn prepare_transfer(
         source_paths: Vec::new(),
         parent_task_id: None,
         attempt_id: None,
+        phase: None,
+        current_file: None,
+        preflight_bytes: 0,
+        preflight_total_bytes: 0,
     };
     state.db.upsert_task(&task)?;
     state
@@ -537,6 +592,15 @@ pub async fn upload_chunk(
             ));
         }
         if let Some(expected) = expected_sha256.as_deref() {
+            set_task_phase(
+                state,
+                task_id,
+                "verifying",
+                Some(relative_path.clone()),
+                expected_size,
+                expected_size,
+            )
+            .await?;
             if let Err(err) = verify_tmp_hash(&tmp_path, expected).await {
                 let _ = fs::remove_file(&tmp_path).await;
                 mark_receive_failed(state, task_id, "integrity").await?;
@@ -819,6 +883,15 @@ async fn update_task(
         task.error_code = error_code.clone();
         task.error = error.clone();
         task.transferred_size = transferred.min(task.total_size);
+        if matches!(
+            status,
+            TransferStatus::Completed | TransferStatus::Failed | TransferStatus::Cancelled
+        ) {
+            task.phase = None;
+            task.current_file = None;
+            task.preflight_bytes = 0;
+            task.preflight_total_bytes = 0;
+        }
         update_speed_eta(task);
         task.updated_at = Utc::now();
         state.db.upsert_task(task)?;
@@ -873,6 +946,37 @@ async fn update_progress(
             "total_size": total_size,
             "speed_bytes_per_sec": speed,
             "eta_seconds": eta
+        }),
+    );
+    Ok(())
+}
+
+async fn set_task_phase(
+    state: &AppState,
+    task_id: &str,
+    phase: &str,
+    current_file: Option<String>,
+    preflight_bytes: u64,
+    preflight_total_bytes: u64,
+) -> Result<()> {
+    {
+        let mut lock = state.tasks.lock().await;
+        if let Some(task) = lock.get_mut(task_id) {
+            task.phase = Some(phase.to_string());
+            task.current_file = current_file.clone();
+            task.preflight_bytes = preflight_bytes;
+            task.preflight_total_bytes = preflight_total_bytes;
+            task.updated_at = Utc::now();
+        }
+    }
+    state.emit(
+        "transfer.phase",
+        json!({
+            "task_id": task_id,
+            "phase": phase,
+            "current_file": current_file,
+            "preflight_bytes": preflight_bytes,
+            "preflight_total_bytes": preflight_total_bytes
         }),
     );
     Ok(())

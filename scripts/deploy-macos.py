@@ -6,6 +6,7 @@ import pathlib
 import socket
 import subprocess
 import sys
+import time
 import uuid
 import zipfile
 
@@ -37,7 +38,7 @@ def make_source_package(package: pathlib.Path) -> None:
         ".git",
         "__pycache__",
     }
-    allow_dirs = ["crates", "apps", "scripts", "_verification_scripts"]
+    allow_dirs = ["crates", "apps", "scripts", "assets", "_verification_scripts"]
     allow_files = ["Cargo.toml", "Cargo.lock", "project.md", "AGENTS.md"]
     with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
         for name in allow_files:
@@ -67,7 +68,7 @@ def fill_config_defaults(config: dict) -> dict:
     config.setdefault(
         "transfer",
         {
-            "max_concurrent_tasks": 1,
+            "max_concurrent_tasks": 2,
             "conflict_strategy": "rename",
             "min_free_space_bytes": 64 * 1024 * 1024,
             "verify_hash": True,
@@ -75,7 +76,8 @@ def fill_config_defaults(config: dict) -> dict:
         },
     )
     transfer = config["transfer"]
-    transfer.setdefault("max_concurrent_tasks", 1)
+    transfer.setdefault("max_concurrent_tasks", 2)
+    transfer["max_concurrent_tasks"] = max(int(transfer.get("max_concurrent_tasks") or 1), 2)
     transfer.setdefault("conflict_strategy", "rename")
     transfer.setdefault("min_free_space_bytes", 64 * 1024 * 1024)
     transfer.setdefault("verify_hash", True)
@@ -93,7 +95,11 @@ def main() -> int:
     import paramiko
 
     host = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.180"
-    password = os.environ.get("WORMHOLE_REMOTE_PASSWORD") or getpass.getpass("macOS SSH password: ")
+    password = (
+        os.environ.get("WORMHOLE_REMOTE_PASSWORD")
+        or os.environ.get("WORMHOLE_MAC_PASSWORD")
+        or getpass.getpass("macOS SSH password: ")
+    )
     local_ip = local_ip_for(host)
     mac_config_path = ROOT / ".wormhole" / "macos" / "config.json"
     win_config_path = ROOT / ".wormhole" / "windows" / "config.json"
@@ -134,6 +140,7 @@ def main() -> int:
                 "target/product/macos/Wormhole.app/Contents/Resources/config && "
                 "cp target/release/wormhole-desktop target/product/macos/Wormhole.app/Contents/MacOS/Wormhole && "
                 "cp target/release/wormhole-daemon target/product/macos/Wormhole.app/Contents/MacOS/wormhole-daemon && "
+                "cp assets/wormhole/Wormhole.icns target/product/macos/Wormhole.app/Contents/Resources/Wormhole.icns && "
                 "cp .wormhole/macos/config.json target/product/macos/Wormhole.app/Contents/MacOS/config/config.json && "
                 "cp -R apps/desktop-ui/dist/. target/product/macos/Wormhole.app/Contents/MacOS/web/ && "
                 "cp -R apps/desktop-ui/dist/. target/product/macos/Wormhole.app/Contents/Resources/web/ && "
@@ -145,6 +152,7 @@ def main() -> int:
                 "<key>CFBundleIdentifier</key><string>dev.wormhole.desktop</string>\n"
                 "<key>CFBundleName</key><string>Wormhole</string>\n"
                 "<key>CFBundleDisplayName</key><string>Wormhole</string>\n"
+                "<key>CFBundleIconFile</key><string>Wormhole.icns</string>\n"
                 "<key>CFBundlePackageType</key><string>APPL</string>\n"
                 "<key>CFBundleShortVersionString</key><string>0.1.0</string>\n"
                 "<key>CFBundleVersion</key><string>0.1.0</string>\n"
@@ -152,22 +160,40 @@ def main() -> int:
                 "<key>NSBonjourServices</key><array></array>\n"
                 "</dict></plist>\n"
                 "PLIST && "
-                "codesign --force --deep --sign - target/product/macos/Wormhole.app"
+                "codesign --force --deep --sign - target/product/macos/Wormhole.app && "
+                "rm -f \"$HOME/Desktop/Wormhole.app\" && "
+                "ln -s \"$PWD/target/product/macos/Wormhole.app\" \"$HOME/Desktop/Wormhole.app\""
             ),
         ]
         for command in commands:
-            _, stdout, stderr = client.exec_command(command)
-            code = stdout.channel.recv_exit_status()
-            out = stdout.read().decode("utf-8", "replace")
-            err = stderr.read().decode("utf-8", "replace")
-            print(out, end="")
-            print(err, end="", file=sys.stderr)
+            code = run_remote_command(client, command)
             if code != 0:
                 raise RuntimeError(f"remote command failed: {command}")
     finally:
         client.close()
     print(f"macOS deployed to {REMOTE_ROOT}")
     return 0
+
+
+def run_remote_command(client, command: str) -> int:
+    transport = client.get_transport()
+    if transport is None:
+        raise RuntimeError("SSH transport is not connected")
+    channel = transport.open_session()
+    channel.set_combine_stderr(True)
+    channel.exec_command(command)
+    while True:
+        while channel.recv_ready():
+            data = channel.recv(16384)
+            if data:
+                print(data.decode("utf-8", "replace"), end="")
+        if channel.exit_status_ready():
+            while channel.recv_ready():
+                data = channel.recv(16384)
+                if data:
+                    print(data.decode("utf-8", "replace"), end="")
+            return channel.recv_exit_status()
+        time.sleep(0.05)
 
 
 if __name__ == "__main__":

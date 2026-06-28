@@ -67,6 +67,10 @@ export interface TransferTaskDto {
   retry_count: number;
   parent_task_id?: string | null;
   attempt_id?: string | null;
+  phase?: string | null;
+  current_file?: string | null;
+  preflight_bytes?: number;
+  preflight_total_bytes?: number;
   created_at: string;
   updated_at: string;
 }

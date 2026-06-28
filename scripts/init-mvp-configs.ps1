@@ -23,7 +23,7 @@ $winConfig = @{
   auto_connect = $true
   clipboard = @{ enabled = $true; text_enabled = $true; image_enabled = $true; max_image_bytes = 20971520; poll_millis = 750; remote_hash_window = 128 }
   shared_token = $SharedToken
-  transfer = @{ max_concurrent_tasks = 1; conflict_strategy = "rename"; min_free_space_bytes = 67108864; verify_hash = $true; resume_enabled = $true }
+  transfer = @{ max_concurrent_tasks = 2; conflict_strategy = "rename"; min_free_space_bytes = 67108864; verify_hash = $true; resume_enabled = $true }
   connection = @{ heartbeat_millis = 5000; reconnect_millis = 3000 }
   history_retention_days = 30
   min_peer_protocol_version = 1
@@ -42,7 +42,7 @@ $macConfig = @{
   auto_connect = $true
   clipboard = @{ enabled = $true; text_enabled = $true; image_enabled = $true; max_image_bytes = 20971520; poll_millis = 750; remote_hash_window = 128 }
   shared_token = $SharedToken
-  transfer = @{ max_concurrent_tasks = 1; conflict_strategy = "rename"; min_free_space_bytes = 67108864; verify_hash = $true; resume_enabled = $true }
+  transfer = @{ max_concurrent_tasks = 2; conflict_strategy = "rename"; min_free_space_bytes = 67108864; verify_hash = $true; resume_enabled = $true }
   connection = @{ heartbeat_millis = 5000; reconnect_millis = 3000 }
   history_retention_days = 30
   min_peer_protocol_version = 1
