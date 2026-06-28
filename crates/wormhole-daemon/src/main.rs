@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use axum::{
+    http::{header, Method},
     middleware,
     response::Html,
     routing::{get, post},
@@ -12,7 +13,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{broadcast, Mutex, RwLock, Semaphore};
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use wormhole_core::{AppConfig, ConnectionStatus, EventLog, HistoryDb};
 use wormhole_platform::SystemClipboard;
 
@@ -37,10 +38,7 @@ async fn main() -> Result<()> {
         .with_env_filter("wormhole_daemon=info,tower_http=warn")
         .init();
     let args = parse_args()?;
-    let mut config = AppConfig::load(&args.config)?;
-    if config.bind_host == "0.0.0.0" {
-        config.bind_host = "127.0.0.1".to_string();
-    }
+    let config = AppConfig::load(&args.config)?;
     config.save(&args.config)?;
     let db = HistoryDb::open(config.data_dir.join("wormhole.sqlite3"))?;
     let (event_tx, _) = broadcast::channel(256);
@@ -62,6 +60,7 @@ async fn main() -> Result<()> {
         remote_hashes: Arc::new(Mutex::new(VecDeque::new())),
         clipboard: Arc::new(Mutex::new(SystemClipboard::new()?)),
     };
+    service::transfer::restore_tasks_from_db(&state).await?;
 
     let app_state = state.clone();
     tokio::spawn(async move { service::clipboard::clipboard_loop(app_state).await });
@@ -149,17 +148,20 @@ fn build_router(state: AppState) -> Router {
 }
 
 fn cors_layer() -> CorsLayer {
-    CorsLayer::new().allow_origin(AllowOrigin::predicate(|origin, _| {
-        origin
-            .to_str()
-            .map(|origin| {
-                origin == "http://127.0.0.1"
-                    || origin.starts_with("http://127.0.0.1:")
-                    || origin == "http://localhost"
-                    || origin.starts_with("http://localhost:")
-            })
-            .unwrap_or(false)
-    }))
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            origin
+                .to_str()
+                .map(|origin| {
+                    origin == "http://127.0.0.1"
+                        || origin.starts_with("http://127.0.0.1:")
+                        || origin == "http://localhost"
+                        || origin.starts_with("http://localhost:")
+                })
+                .unwrap_or(false)
+        }))
+        .allow_methods(AllowMethods::list([Method::GET, Method::POST]))
+        .allow_headers(AllowHeaders::list([header::CONTENT_TYPE]))
 }
 
 async fn index() -> Html<&'static str> {

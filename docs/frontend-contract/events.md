@@ -77,3 +77,5 @@ Fields: updated public settings or changed flags.
 Fields: `error_code`, `error`.
 
 Events never include UI copy. The frontend owns wording and localization.
+
+Events never include sender source paths, `shared_token`, clipboard text, PNG bytes, temp paths, or internal receive indexes. `transfer.completed.save_path` is allowed only for the receiving side because it refers to the local save destination.

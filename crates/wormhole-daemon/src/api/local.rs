@@ -1,6 +1,6 @@
 use axum::{extract::State, Json};
 use serde_json::json;
-use wormhole_core::{ConnectionStatus, PublicDevice, TransferStatus};
+use wormhole_core::{ConnectionStatus, PublicDevice, TransferStatus, TransferTask};
 
 use crate::{
     dto::{
@@ -14,7 +14,7 @@ use crate::{
 
 pub async fn state(State(state): State<AppState>) -> Json<StateDto> {
     let config = state.config.read().await;
-    let tasks = state.db.tasks().unwrap_or_default();
+    let tasks = current_tasks(&state).await;
     let history_count = state.db.history(100).map(|h| h.len()).unwrap_or(0);
     let active_transfer_count = tasks
         .iter()
@@ -72,16 +72,20 @@ pub async fn cancel_transfer(
 
 pub async fn retry_transfer(
     State(state): State<AppState>,
+    body: axum::body::Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    transfer::retry_transfer(state).await
+    let req = if body.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_slice(&body)?)
+    };
+    transfer::retry_transfer(state, req).await
 }
 
 pub async fn tasks(State(state): State<AppState>) -> Json<Vec<TransferTaskDto>> {
     Json(
-        state
-            .db
-            .tasks()
-            .unwrap_or_default()
+        current_tasks(&state)
+            .await
             .iter()
             .map(TransferTaskDto::from)
             .collect(),
@@ -142,4 +146,31 @@ pub async fn disconnect(State(state): State<AppState>) -> Json<serde_json::Value
     *state.status.write().await = ConnectionStatus::PeerOffline;
     state.emit("connection.changed", json!({"status":"peer_offline"}));
     Json(json!({"ok":true}))
+}
+
+async fn current_tasks(state: &AppState) -> Vec<TransferTask> {
+    let mut tasks = state
+        .tasks
+        .lock()
+        .await
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    tasks.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.created_at.cmp(&a.created_at))
+            .then_with(|| b.task_id.cmp(&a.task_id))
+    });
+    if tasks.is_empty() {
+        let mut recovered = state.db.tasks().unwrap_or_default();
+        recovered.sort_by(|a, b| {
+            b.updated_at
+                .cmp(&a.updated_at)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+                .then_with(|| b.task_id.cmp(&a.task_id))
+        });
+        return recovered;
+    }
+    tasks
 }

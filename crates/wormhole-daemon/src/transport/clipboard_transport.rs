@@ -100,3 +100,79 @@ fn url_escape(value: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc,
+        },
+        thread,
+        time::Duration,
+    };
+
+    #[test]
+    fn refused_prepare_does_not_upload_chunks() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake peer");
+        listener
+            .set_nonblocking(true)
+            .expect("set listener nonblocking");
+        let addr = listener.local_addr().expect("listener addr");
+        let stop = Arc::new(AtomicBool::new(false));
+        let chunks = Arc::new(AtomicUsize::new(0));
+        let stop_for_thread = stop.clone();
+        let chunks_for_thread = chunks.clone();
+        let handle = thread::spawn(move || {
+            while !stop_for_thread.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buf = [0u8; 2048];
+                        let n = stream.read(&mut buf).unwrap_or(0);
+                        let req = String::from_utf8_lossy(&buf[..n]);
+                        let first = req.lines().next().unwrap_or_default();
+                        let body = if first.contains("/prepare") {
+                            r#"{"accepted":false,"reason":"too_large","offset":null,"max_image_bytes":1}"#
+                        } else {
+                            chunks_for_thread.fetch_add(1, Ordering::SeqCst);
+                            r#"{"ok":true}"#
+                        };
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let outcome = post_png_chunks(
+            &format!("http://{addr}/peer/clipboard/image"),
+            &"a".repeat(64),
+            "source-device",
+            b"png-bytes",
+            None,
+            4,
+        )
+        .expect("post png chunks");
+        stop.store(true, Ordering::SeqCst);
+        handle.join().expect("fake peer thread");
+
+        match outcome {
+            ClipboardUploadOutcome::Ignored { reason } => {
+                assert_eq!(reason.as_deref(), Some("too_large"));
+            }
+            ClipboardUploadOutcome::Uploaded => panic!("refused prepare must not upload"),
+        }
+        assert_eq!(chunks.load(Ordering::SeqCst), 0);
+    }
+}

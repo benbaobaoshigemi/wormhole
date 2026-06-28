@@ -9,6 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+import socket
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,13 +23,13 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def config(name, port, peer_port):
+def config(name, port, peer_port, bind_host="127.0.0.1"):
     base = RUNTIME / name
     return {
         "device_id": f"{name}-device",
         "device_name": name,
         "platform": "windows",
-        "bind_host": "127.0.0.1",
+        "bind_host": bind_host,
         "port": port,
         "peer": {"name": "peer", "host": "127.0.0.1", "port": peer_port},
         "receive_dir": str(base / "received"),
@@ -58,7 +59,7 @@ def config(name, port, peer_port):
     }
 
 
-def request(port, method, path, body=None, token=None, raw=None):
+def request(port, method, path, body=None, token=None, raw=None, host="127.0.0.1"):
     data = None
     headers = {}
     if body is not None:
@@ -70,7 +71,7 @@ def request(port, method, path, body=None, token=None, raw=None):
     if token is not None:
         headers["x-wormhole-token"] = token
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}", data=data, method=method, headers=headers
+        f"http://{host}:{port}{path}", data=data, method=method, headers=headers
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -101,16 +102,36 @@ def assert_true(condition, message):
         raise AssertionError(message)
 
 
+def local_lan_ip():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.connect(("192.168.1.180", 9))
+        return sock.getsockname()[0]
+
+
+def wait_task(port, task_id, wanted_status, timeout=10.0):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        status, state = request(port, "GET", "/local/state")
+        if status == 200:
+            for task in state["tasks"]:
+                if task["task_id"] == task_id:
+                    last = task
+                    if task["status"] == wanted_status:
+                        return task
+        time.sleep(0.1)
+    raise AssertionError(f"task {task_id} did not reach {wanted_status}: {last}")
+
+
 def main():
     shutil.rmtree(RUNTIME, ignore_errors=True)
     cfg_a = RUNTIME / "A" / "config.json"
     cfg_b = RUNTIME / "B" / "config.json"
     write_json(cfg_a, config("A", 55317, 55318))
-    write_json(cfg_b, config("B", 55318, 55317))
+    write_json(cfg_b, config("B", 55318, 55317, bind_host="0.0.0.0"))
 
     exe = ROOT / "target" / "debug" / "wormhole-daemon.exe"
-    if not exe.exists():
-        subprocess.run(["cargo", "build", "-p", "wormhole-daemon"], cwd=ROOT, check=True)
+    subprocess.run(["cargo", "build", "-p", "wormhole-daemon"], cwd=ROOT, check=True)
 
     procs = [
         subprocess.Popen([str(exe), "--config", str(cfg_a)], cwd=ROOT),
@@ -119,6 +140,13 @@ def main():
     try:
         wait_ready(55317)
         wait_ready(55318)
+
+        lan_ip = local_lan_ip()
+        assert_true(not lan_ip.startswith("127."), f"local LAN IP probe returned loopback: {lan_ip}")
+        status, _ = request(55318, "GET", "/peer/handshake", host=lan_ip)
+        assert_true(status == 200, "peer API was not reachable through LAN-bound listener")
+        status, _ = request(55318, "GET", "/local/state", host=lan_ip)
+        assert_true(status == 403, "local API accepted non-loopback client")
 
         status, state = request(55317, "GET", "/local/state")
         assert_true(status == 200, "local state failed")
@@ -134,11 +162,54 @@ def main():
             "files": [{"relative_path": "contract.txt", "size": len(data), "sha256": sha}],
             "total_size": len(data),
         }
+        duplicate_manifest = {
+            "task_id": "dup-task",
+            "root_name": "dup",
+            "files": [
+                {"relative_path": "dup.txt", "size": 1, "sha256": sha},
+                {"relative_path": "dup.txt", "size": 1, "sha256": sha},
+            ],
+            "total_size": 2,
+        }
+        status, body = request(55318, "POST", "/peer/transfer/prepare", duplicate_manifest, token=TOKEN)
+        assert_true(status == 400 and body["error_code"] == "duplicate_path", "duplicate path was not rejected")
+        total_mismatch_manifest = {
+            "task_id": "bad-total-task",
+            "root_name": "bad-total",
+            "files": [{"relative_path": "a.txt", "size": 3, "sha256": sha}],
+            "total_size": 2,
+        }
+        status, body = request(55318, "POST", "/peer/transfer/prepare", total_mismatch_manifest, token=TOKEN)
+        assert_true(status == 400 and body["error_code"] == "total_size_mismatch", "total_size mismatch was not rejected")
+        unsafe_manifest = {
+            "task_id": "unsafe-task",
+            "root_name": "unsafe",
+            "files": [{"relative_path": "../escape.txt", "size": 1, "sha256": sha}],
+            "total_size": 1,
+        }
+        status, body = request(55318, "POST", "/peer/transfer/prepare", unsafe_manifest, token=TOKEN)
+        assert_true(status == 400 and body["error_code"] == "unsafe_path", "unsafe path was not rejected")
+
         status, _ = request(55318, "POST", "/peer/transfer/prepare", manifest, token="wrong")
         assert_true(status == 401, "wrong peer token did not return 401")
 
         status, body = request(55318, "POST", "/peer/transfer/prepare", manifest, token=TOKEN)
         assert_true(status == 200 and body["ok"], "peer prepare failed")
+        status, _ = request(
+            55318,
+            "GET",
+            "/peer/transfer/upload-status/contract-task?path=missing.txt",
+            token=TOKEN,
+        )
+        assert_true(status == 404, "upload path outside manifest was not rejected")
+        wrong_sha = "0" * 64
+        status, body = request(
+            55318,
+            "GET",
+            f"/peer/transfer/upload-status/contract-task?path=contract.txt&sha256={wrong_sha}",
+            token=TOKEN,
+        )
+        assert_true(status == 409 and body["error_code"] == "sha256_mismatch", "sha mismatch was not rejected")
         status, body = request(
             55318,
             "GET",
@@ -146,6 +217,17 @@ def main():
             token=TOKEN,
         )
         assert_true(status == 200 and body["offset"] == 0, "upload status failed")
+        query = urllib.parse.urlencode(
+            {"path": "contract.txt", "offset": 1, "final_chunk": "true", "sha256": sha}
+        )
+        status, body = request(
+            55318,
+            "POST",
+            f"/peer/transfer/upload-chunk/contract-task?{query}",
+            token=TOKEN,
+            raw=data,
+        )
+        assert_true(status == 409 and body["error_code"] == "offset_mismatch", "offset mismatch was not rejected")
         query = urllib.parse.urlencode(
             {"path": "contract.txt", "offset": 0, "final_chunk": "true", "sha256": sha}
         )
@@ -161,6 +243,97 @@ def main():
             (RUNTIME / "B" / "received" / "contract.txt").read_bytes() == data,
             "received file content mismatch",
         )
+        task = wait_task(55318, "contract-task", "completed")
+        assert_true(task["transferred_size"] == len(data), "final chunk did not complete receive task")
+
+        progress_data = b"x" * (512 * 1024)
+        progress_sha = hashlib.sha256(progress_data).hexdigest()
+        progress_manifest = {
+            "task_id": "progress-task",
+            "root_name": "progress.bin",
+            "files": [{"relative_path": "progress.bin", "size": len(progress_data), "sha256": progress_sha}],
+            "total_size": len(progress_data),
+        }
+        status, body = request(55318, "POST", "/peer/transfer/prepare", progress_manifest, token=TOKEN)
+        assert_true(status == 200 and body["ok"], "progress prepare failed")
+        first = progress_data[:262144]
+        second = progress_data[262144:]
+        query = urllib.parse.urlencode(
+            {"path": "progress.bin", "offset": 0, "final_chunk": "false", "sha256": progress_sha}
+        )
+        status, body = request(
+            55318,
+            "POST",
+            f"/peer/transfer/upload-chunk/progress-task?{query}",
+            token=TOKEN,
+            raw=first,
+        )
+        assert_true(status == 200, "first progress chunk failed")
+        status, state = request(55318, "GET", "/local/state")
+        progress_task = next(task for task in state["tasks"] if task["task_id"] == "progress-task")
+        assert_true(progress_task["transferred_size"] == len(first), "local state did not expose in-memory transferred_size")
+        query = urllib.parse.urlencode(
+            {"path": "progress.bin", "offset": len(first), "final_chunk": "true", "sha256": progress_sha}
+        )
+        status, body = request(
+            55318,
+            "POST",
+            f"/peer/transfer/upload-chunk/progress-task?{query}",
+            token=TOKEN,
+            raw=second,
+        )
+        assert_true(status == 200, "final progress chunk failed")
+
+        bad_data = b"bad"
+        expected_sha = hashlib.sha256(b"expected").hexdigest()
+        mismatch_manifest = {
+            "task_id": "hash-mismatch-task",
+            "root_name": "hash.txt",
+            "files": [{"relative_path": "hash.txt", "size": len(bad_data), "sha256": expected_sha}],
+            "total_size": len(bad_data),
+        }
+        status, body = request(55318, "POST", "/peer/transfer/prepare", mismatch_manifest, token=TOKEN)
+        assert_true(status == 200 and body["ok"], "hash mismatch prepare failed")
+        query = urllib.parse.urlencode(
+            {"path": "hash.txt", "offset": 0, "final_chunk": "true", "sha256": expected_sha}
+        )
+        status, body = request(
+            55318,
+            "POST",
+            f"/peer/transfer/upload-chunk/hash-mismatch-task?{query}",
+            token=TOKEN,
+            raw=bad_data,
+        )
+        assert_true(status == 422 and body["error_code"] == "integrity", "final hash mismatch was not rejected")
+        task = wait_task(55318, "hash-mismatch-task", "failed")
+        assert_true(task["error_code"] == "integrity", "hash mismatch was not observable as failed task")
+
+        source_dir = RUNTIME / "A" / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        file_a = source_dir / "a.txt"
+        file_b = source_dir / "b.txt"
+        file_a.write_bytes(b"a" * 17)
+        file_b.write_bytes(b"b" * 23)
+        total_size = file_a.stat().st_size + file_b.stat().st_size
+        status, _ = request(55317, "POST", "/local/settings/update", {"peer_port": 55999})
+        assert_true(status == 200, "failed to point A at unavailable peer")
+        status, body = request(55317, "POST", "/local/transfer/send", {"paths": [str(file_a), str(file_b)]})
+        assert_true(status == 200 and body["ok"], "failed to create retry test transfer")
+        retry_task_id = body["task_id"]
+        failed_task = wait_task(55317, retry_task_id, "failed")
+        assert_true(failed_task["item_count"] == 2 and failed_task["total_size"] == total_size, "failed multi-file task metadata shrank before retry")
+        status, _ = request(55317, "POST", "/local/transfer/cancel", {"task_id": retry_task_id})
+        assert_true(status == 200, "cancel before retry failed")
+        status, _ = request(55317, "POST", "/local/settings/update", {"peer_port": 55318})
+        assert_true(status == 200, "failed to restore A peer port")
+        status, body = request(55317, "POST", "/local/transfer/retry", {"task_id": retry_task_id})
+        assert_true(status == 200 and body["task_id"] == retry_task_id, "specified retry did not preserve task id")
+        retried_task = wait_task(55317, retry_task_id, "completed", timeout=15.0)
+        assert_true(retried_task["retry_count"] == 1, "retry_count did not increment")
+        assert_true(retried_task["item_count"] == 2, "retry item_count shrank")
+        assert_true(retried_task["total_size"] == total_size, "retry total_size changed")
+        assert_true((RUNTIME / "B" / "received" / "a.txt").exists(), "retried file a not received")
+        assert_true((RUNTIME / "B" / "received" / "b.txt").exists(), "retried file b not received")
 
         too_large = {"hash": sha, "source_device_id": "A-device", "size": 4096}
         status, body = request(

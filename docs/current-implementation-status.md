@@ -7,7 +7,9 @@ The project is now in the formal Rust prototype stage. The old all-in-one daemon
 - Removed `/api/*` from product code.
 - Added separate `/local/*` and `/peer/*` namespaces.
 - Restricted Local API to loopback clients.
+- Kept configured `bind_host` intact so `/peer/*` can be reachable from the LAN while `/local/*` remains loopback-protected.
 - Removed permissive CORS.
+- Explicitly limited CORS to loopback origins, `GET`/`POST`, and `content-type`.
 - Added peer token validation for peer write APIs.
 - Stopped returning `shared_token` through state and settings DTOs.
 - Split local manifest from wire manifest so peer manifests cannot contain `source_path`.
@@ -17,7 +19,10 @@ The project is now in the formal Rust prototype stage. The old all-in-one daemon
 - Added sender-side chunk progress events.
 - Changed scan manifest to fast path scan without pre-hashing every file.
 - Preserved retry as the same user-visible task id.
+- Fixed retry to preserve the full original manifest and support `POST /local/transfer/retry` with `{ "task_id": "..." }`.
 - Fixed cancelled marker cleanup on retry.
+- Changed `/local/state` and `/local/transfer/tasks` to use current in-memory task state; SQLite is used for startup recovery and history persistence.
+- Added manifest validation for empty manifests, duplicate relative paths, unsafe paths, invalid hashes, overflow, and total size mismatch.
 - Added non-Windows/macOS in-memory clipboard fallback for CI tests.
 - Updated CLI and debug UI to `/local/*`.
 - Added frontend contract docs and mock data.

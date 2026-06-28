@@ -142,6 +142,11 @@ pub struct CancelRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RetryRequest {
+    pub task_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SettingsUpdateRequest {
     pub device_name: Option<String>,
     pub peer_name: Option<String>,
