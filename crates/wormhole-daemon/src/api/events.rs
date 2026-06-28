@@ -16,14 +16,14 @@ pub async fn events(
     let stream = async_stream::stream! {
         for event in latest {
             if let Ok(data) = serde_json::to_string(&event) {
-                yield Ok(SseEvent::default().event(event.event_type).data(data));
+                yield Ok(SseEvent::default().data(data));
             }
         }
         loop {
             match rx.recv().await {
                 Ok(event) => {
                     if let Ok(data) = serde_json::to_string(&event) {
-                        yield Ok(SseEvent::default().event(event.event_type).data(data));
+                        yield Ok(SseEvent::default().data(data));
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,

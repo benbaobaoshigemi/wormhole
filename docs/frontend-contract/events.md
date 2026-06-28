@@ -1,6 +1,18 @@
 # Event Contract
 
-Events are delivered through `GET /local/events` as server-sent events. Each payload is a serialized `Event`:
+Events are delivered through `GET /local/events` as server-sent events. The daemon sends all events as the default SSE `message`; the event name is inside the JSON `type` field. Frontend code should use `onmessage`, not per-event `addEventListener` handlers:
+
+```js
+const es = new EventSource("/local/events");
+es.onmessage = (msg) => {
+  const event = JSON.parse(msg.data);
+  switch (event.type) {
+    // handle event.data
+  }
+};
+```
+
+Each payload is a serialized `Event`:
 
 ```json
 {

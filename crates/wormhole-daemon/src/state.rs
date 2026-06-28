@@ -27,6 +27,16 @@ pub struct ReceiveTaskState {
     pub files: HashMap<String, ReceiveFileState>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PreparedImageState {
+    pub hash: String,
+    pub source_device_id: String,
+    pub expected_size: u64,
+    pub received_size: u64,
+    pub tmp_path: PathBuf,
+    pub max_image_bytes: u64,
+}
+
 #[derive(Clone)]
 pub struct FailedTransfer {
     pub task_id: String,
@@ -48,6 +58,7 @@ pub struct AppState {
     pub failed_task_ids: Arc<Mutex<HashSet<String>>>,
     pub cancelled: Arc<Mutex<HashSet<String>>>,
     pub receive_tasks: Arc<Mutex<HashMap<String, ReceiveTaskState>>>,
+    pub prepared_images: Arc<Mutex<HashMap<String, PreparedImageState>>>,
     pub transfer_slots: Arc<Semaphore>,
     pub remote_hashes: Arc<Mutex<VecDeque<String>>>,
     pub clipboard: Arc<Mutex<SystemClipboard>>,

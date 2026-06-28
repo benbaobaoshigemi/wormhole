@@ -56,6 +56,7 @@ async fn main() -> Result<()> {
         failed_task_ids: Arc::new(Mutex::new(HashSet::new())),
         cancelled: Arc::new(Mutex::new(HashSet::new())),
         receive_tasks: Arc::new(Mutex::new(HashMap::new())),
+        prepared_images: Arc::new(Mutex::new(HashMap::new())),
         transfer_slots,
         remote_hashes: Arc::new(Mutex::new(VecDeque::new())),
         clipboard: Arc::new(Mutex::new(SystemClipboard::new()?)),

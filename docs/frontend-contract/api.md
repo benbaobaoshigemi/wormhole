@@ -55,3 +55,17 @@ No DTO contains `shared_token`, clipboard body text, PNG bytes, or sender source
 ```
 
 If the body is empty, the daemon retries the most recent failed task. The formal frontend should pass `task_id` so the user action maps to the visible task row.
+
+
+## Event Stream Consumption
+
+`GET /local/events` uses default SSE `message` events. The frontend should consume it with:
+
+```js
+const es = new EventSource("/local/events");
+es.onmessage = (msg) => {
+  const event = JSON.parse(msg.data);
+};
+```
+
+Do not require `addEventListener("transfer.progress", ...)`. The event type is `event.type` inside the JSON payload.

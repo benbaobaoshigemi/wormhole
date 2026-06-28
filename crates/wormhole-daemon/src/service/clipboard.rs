@@ -12,7 +12,7 @@ use wormhole_core::{ClipboardPayload, ClipboardPort};
 use crate::{
     dto::ImagePrepareResponse,
     error::ApiError,
-    state::AppState,
+    state::{AppState, PreparedImageState},
     transport::clipboard_transport::{self, ClipboardUploadOutcome},
 };
 
@@ -165,22 +165,39 @@ pub async fn prepare_image_clipboard(
             max_image_bytes: config.clipboard.max_image_bytes,
         }));
     }
+
     let dir = config.data_dir.join("clipboard");
     fs::create_dir_all(&dir).await?;
     let tmp = clipboard_tmp_path(&config.data_dir, &req.hash);
-    let offset = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+    let mut offset = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
     if offset > req.size {
         let _ = fs::remove_file(&tmp).await;
+        offset = 0;
     }
     OpenOptions::new()
         .create(true)
         .append(true)
         .open(&tmp)
         .await?;
+    offset = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+
+    let key = prepared_image_key(&req.source_device_id, &req.hash);
+    state.prepared_images.lock().await.insert(
+        key,
+        PreparedImageState {
+            hash: req.hash.clone(),
+            source_device_id: req.source_device_id.clone(),
+            expected_size: req.size,
+            received_size: offset,
+            tmp_path: tmp,
+            max_image_bytes: config.clipboard.max_image_bytes,
+        },
+    );
+
     Ok(Json(ImagePrepareResponse {
         accepted: true,
         reason: None,
-        offset: Some(std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0)),
+        offset: Some(offset),
         max_image_bytes: config.clipboard.max_image_bytes,
     }))
 }
@@ -219,20 +236,50 @@ pub async fn receive_image_chunk(
         );
         return Ok(Json(json!({"ok":true,"ignored":true})));
     }
-    let tmp = clipboard_tmp_path(&config.data_dir, &query.hash);
-    let current_len = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
-    if current_len != query.offset {
+
+    let key = prepared_image_key(&query.source_device_id, &query.hash);
+    let prepared = {
+        let prepared_images = state.prepared_images.lock().await;
+        prepared_images.get(&key).cloned().ok_or_else(|| {
+            ApiError::status(
+                StatusCode::CONFLICT,
+                "image_not_prepared",
+                anyhow!("clipboard image chunk received before prepare"),
+            )
+        })?
+    };
+
+    if prepared.hash != query.hash || prepared.source_device_id != query.source_device_id {
+        return Err(ApiError::status(
+            StatusCode::BAD_REQUEST,
+            "prepare_mismatch",
+            anyhow!("clipboard image prepare state mismatch"),
+        ));
+    }
+    if query.offset != prepared.received_size {
         return Err(ApiError::status(
             StatusCode::CONFLICT,
             "offset_mismatch",
             anyhow!("clipboard image offset mismatch"),
         ));
     }
-    if current_len.saturating_add(body.len() as u64) > config.clipboard.max_image_bytes {
-        let _ = fs::remove_file(&tmp).await;
+    let current_len = std::fs::metadata(&prepared.tmp_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    if current_len != prepared.received_size {
+        return Err(ApiError::status(
+            StatusCode::CONFLICT,
+            "offset_mismatch",
+            anyhow!("clipboard image temp file size mismatch"),
+        ));
+    }
+    let new_len = current_len.saturating_add(body.len() as u64);
+    if new_len > prepared.max_image_bytes || new_len > config.clipboard.max_image_bytes {
+        let _ = fs::remove_file(&prepared.tmp_path).await;
+        state.prepared_images.lock().await.remove(&key);
         state.emit(
             "clipboard.too_large",
-            json!({"kind":"image","hash":query.hash,"size":current_len + body.len() as u64}),
+            json!({"kind":"image","hash":query.hash,"size":new_len}),
         );
         return Err(ApiError::status(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -240,31 +287,58 @@ pub async fn receive_image_chunk(
             anyhow!("clipboard image too large"),
         ));
     }
+    if new_len > prepared.expected_size {
+        let _ = fs::remove_file(&prepared.tmp_path).await;
+        state.prepared_images.lock().await.remove(&key);
+        state.emit(
+            "clipboard.failed",
+            json!({"kind":"image","hash":query.hash,"error_code":"size_exceeded"}),
+        );
+        return Err(ApiError::status(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "size_exceeded",
+            anyhow!("clipboard image exceeded prepared size"),
+        ));
+    }
+
     {
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&tmp)
+            .open(&prepared.tmp_path)
             .await?;
         file.write_all(&body).await?;
         file.flush().await?;
     }
+
     if !query.final_chunk {
-        return Ok(Json(json!({"ok":true,"received":body.len()})));
-    }
-    let meta_len = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
-    if meta_len > config.clipboard.max_image_bytes {
-        let _ = fs::remove_file(&tmp).await;
-        return Err(ApiError::status(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "too_large",
-            anyhow!("clipboard image too large"),
+        if let Some(prepared) = state.prepared_images.lock().await.get_mut(&key) {
+            prepared.received_size = new_len;
+        }
+        return Ok(Json(
+            json!({"ok":true,"received":body.len(),"offset":new_len}),
         ));
     }
-    let png = fs::read(&tmp).await?;
+
+    if new_len != prepared.expected_size {
+        let _ = fs::remove_file(&prepared.tmp_path).await;
+        state.prepared_images.lock().await.remove(&key);
+        state.emit(
+            "clipboard.failed",
+            json!({"kind":"image","hash":query.hash,"error_code":"size_mismatch"}),
+        );
+        return Err(ApiError::status(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "size_mismatch",
+            anyhow!("clipboard image final size mismatch"),
+        ));
+    }
+
+    let png = fs::read(&prepared.tmp_path).await?;
     let actual_hash = ClipboardPayload::hash_bytes(&png);
     if actual_hash != query.hash {
-        let _ = fs::remove_file(&tmp).await;
+        let _ = fs::remove_file(&prepared.tmp_path).await;
+        state.prepared_images.lock().await.remove(&key);
         state.emit(
             "clipboard.failed",
             json!({"kind":"image","hash":query.hash,"error_code":"integrity"}),
@@ -275,7 +349,8 @@ pub async fn receive_image_chunk(
             anyhow!("clipboard image hash mismatch"),
         ));
     }
-    let _ = fs::remove_file(&tmp).await;
+    let _ = fs::remove_file(&prepared.tmp_path).await;
+    state.prepared_images.lock().await.remove(&key);
     state.clipboard.lock().await.write_png(&png)?;
     remember_remote_hash(state, query.hash.clone()).await;
     state.db.record_clipboard("image", &query.hash, "receive")?;
@@ -429,6 +504,10 @@ fn peer_post_json<T: serde::de::DeserializeOwned>(
     Ok(request
         .send_json(serde_json::to_value(body)?)?
         .into_json()?)
+}
+
+fn prepared_image_key(source_device_id: &str, hash: &str) -> String {
+    format!("{}:{}", source_device_id, hash)
 }
 
 fn clipboard_tmp_path(data_dir: &std::path::Path, hash: &str) -> std::path::PathBuf {
