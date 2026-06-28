@@ -1,0 +1,18 @@
+{
+  "device": {
+    "device_id": "win-node-01",
+    "device_name": "Windows Workstation",
+    "platform": "windows",
+    "port": 53317,
+    "protocol_version": 1,
+    "capabilities": ["file_chunk_upload", "file_resume", "file_sha256", "clipboard_text", "clipboard_png_chunk"]
+  },
+  "status": "connected",
+  "peer": null,
+  "settings": {},
+  "clipboard": {},
+  "active_transfer_count": 0,
+  "recent_history_count": 0,
+  "tasks": [],
+  "events": []
+}

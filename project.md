@@ -1054,49 +1054,43 @@ Windows 和 macOS 分别实现这些接口。
 连接相关：
 
 ```text
-GET  /api/state
-POST /api/connect
-POST /api/disconnect
-POST /api/reconnect
-POST /api/peer/update
+GET  /local/state
+POST /local/connect
+POST /local/disconnect
 ```
 
 文件传输：
 
 ```text
-POST /api/transfer/send
-POST /api/transfer/cancel
-POST /api/transfer/retry
-GET  /api/transfer/tasks
-GET  /api/transfer/history
-POST /api/transfer/history/clear
+POST /local/transfer/send
+POST /local/transfer/cancel
+POST /local/transfer/retry
+GET  /local/transfer/tasks
+GET  /local/transfer/history
+POST /local/transfer/history/clear
 ```
 
 剪贴板：
 
 ```text
-GET  /api/clipboard/status
-POST /api/clipboard/enable
-POST /api/clipboard/disable
-POST /api/clipboard/text/enable
-POST /api/clipboard/image/enable
-POST /api/clipboard/image-limit
+GET  /local/clipboard/status
+POST /local/clipboard/enable
+POST /local/clipboard/disable
+POST /local/clipboard/system/read-send-text
+POST /local/clipboard/system/read-send-image
 ```
 
 设置：
 
 ```text
-GET  /api/settings
-POST /api/settings/update
-POST /api/settings/test-connection
-POST /api/settings/open-receive-folder
+GET  /local/settings
+POST /local/settings/update
 ```
 
 诊断：
 
 ```text
-GET  /api/logs/export
-GET  /api/version
+GET  /local/events
 ```
 
 ### 13.3 WebSocket 事件草案
@@ -1477,7 +1471,7 @@ Windows 边缘 UI 建议使用：
 释放后拿到文件路径数组，调用：
 
 ```text
-POST /api/transfer/send
+POST /local/transfer/send
 ```
 
 ### 18.3 macOS 实现

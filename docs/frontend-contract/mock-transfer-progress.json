@@ -1,0 +1,13 @@
+{
+  "ts": "2026-06-28T10:00:07Z",
+  "type": "transfer.progress",
+  "data": {
+    "task_id": "task-20260628-001",
+    "relative_path": "ProjectFiles/video.mov",
+    "direction": "send",
+    "transferred_size": 36700160,
+    "total_size": 104857600,
+    "speed_bytes_per_sec": 5242880,
+    "eta_seconds": 13
+  }
+}

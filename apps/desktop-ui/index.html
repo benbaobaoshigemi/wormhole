@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wormhole Link</title>
+  <title>Wormhole Link Debug UI</title>
   <style>
     :root { color-scheme: light dark; font-family: "Segoe UI", system-ui, sans-serif; }
     body { margin: 0; background: #f4f6f8; color: #17202a; }
@@ -34,8 +34,8 @@
   <main>
     <header>
       <div>
-        <h1>Wormhole Link</h1>
-        <div class="muted">两台电脑之间的文件穿越和剪贴板互通</div>
+        <h1>Wormhole Link Debug UI</h1>
+        <div class="muted">仅用于后端调试；正式前端基于 docs/frontend-contract 开发</div>
       </div>
       <button onclick="connectPeer()">连接对端</button>
     </header>
@@ -88,29 +88,29 @@
       return data;
     }
     async function refresh() {
-      const state = await api("/api/state");
+      const state = await api("/local/state");
       $("status").textContent = state.status;
       $("device").textContent = `${state.device.device_name} · ${state.device.platform} · :${state.device.port}`;
-      $("peer").textContent = state.peer ? `${state.peer.device_name} · ${state.peer.platform}` : `${state.settings.peer.host}:${state.settings.peer.port}`;
+      $("peer").textContent = state.peer ? `${state.peer.device_name} · ${state.peer.platform}` : `${state.settings.peer_host}:${state.settings.peer_port}`;
       $("clipboard").textContent = state.settings.clipboard.enabled ? "已开启" : "已关闭";
-      const tasks = await api("/api/transfer/tasks");
+      const tasks = await api("/local/transfer/tasks");
       $("tasks").innerHTML = tasks.map(t => {
         const pct = t.total_size ? Math.round((t.transferred_size / t.total_size) * 100) : 0;
         return `<div class="task"><b>${t.root_name}</b><div class="muted">${t.direction} · ${t.status} · ${t.item_count} 项 · ${t.total_size} bytes</div><progress value="${pct}" max="100"></progress><div>${pct}% ${t.error || ""}</div></div>`;
       }).join("") || "<div class='muted'>暂无任务</div>";
     }
-    async function connectPeer() { await api("/api/connect", { method: "POST" }).catch(alert); refresh(); }
+    async function connectPeer() { await api("/local/connect", { method: "POST" }).catch(alert); refresh(); }
     async function sendPaths() {
       const paths = $("pathInput").value.split(";").map(s => s.trim()).filter(Boolean);
-      await api("/api/transfer/send", { method: "POST", body: JSON.stringify({ paths }) }).catch(alert);
+      await api("/local/transfer/send", { method: "POST", body: JSON.stringify({ paths }) }).catch(alert);
       refresh();
     }
-    async function retry() { await api("/api/transfer/retry", { method: "POST" }).catch(alert); refresh(); }
-    async function clipEnable() { await api("/api/clipboard/enable", { method: "POST" }).catch(alert); refresh(); }
-    async function clipDisable() { await api("/api/clipboard/disable", { method: "POST" }).catch(alert); refresh(); }
-    async function sendTextClipboard() { await api("/api/clipboard/system/read-send-text", { method: "POST" }).catch(alert); }
-    async function sendImageClipboard() { await api("/api/clipboard/system/read-send-image", { method: "POST" }).catch(alert); }
-    const es = new EventSource("/api/events");
+    async function retry() { await api("/local/transfer/retry", { method: "POST" }).catch(alert); refresh(); }
+    async function clipEnable() { await api("/local/clipboard/enable", { method: "POST" }).catch(alert); refresh(); }
+    async function clipDisable() { await api("/local/clipboard/disable", { method: "POST" }).catch(alert); refresh(); }
+    async function sendTextClipboard() { await api("/local/clipboard/system/read-send-text", { method: "POST" }).catch(alert); }
+    async function sendImageClipboard() { await api("/local/clipboard/system/read-send-image", { method: "POST" }).catch(alert); }
+    const es = new EventSource("/local/events");
     es.onmessage = (msg) => {
       events.push(msg.data);
       while (events.length > 80) events.shift();
@@ -122,4 +122,3 @@
   </script>
 </body>
 </html>
-

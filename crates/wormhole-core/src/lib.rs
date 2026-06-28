@@ -282,11 +282,16 @@ pub struct TransferTask {
     pub error_code: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
     pub source_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub parent_task_id: Option<String>,
+    #[serde(default)]
+    pub attempt_id: Option<String>,
 }
 
 impl TransferTask {
-    pub fn new_send(manifest: &TransferManifest, paths: Vec<PathBuf>) -> Self {
+    pub fn new_send(manifest: &LocalTransferManifest, paths: Vec<PathBuf>) -> Self {
         let now = Utc::now();
         Self {
             task_id: manifest.task_id.clone(),
@@ -306,20 +311,22 @@ impl TransferTask {
             created_at: now,
             updated_at: now,
             source_paths: paths,
+            parent_task_id: None,
+            attempt_id: None,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransferManifest {
+pub struct LocalTransferManifest {
     pub task_id: String,
     pub root_name: String,
-    pub files: Vec<TransferItem>,
+    pub files: Vec<LocalTransferItem>,
     pub total_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransferItem {
+pub struct LocalTransferItem {
     pub relative_path: String,
     pub size: u64,
     pub source_path: PathBuf,
@@ -327,7 +334,45 @@ pub struct TransferItem {
     pub sha256: Option<String>,
 }
 
-pub fn scan_manifest(paths: &[PathBuf]) -> Result<TransferManifest> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WireTransferManifest {
+    pub task_id: String,
+    pub root_name: String,
+    pub files: Vec<WireTransferItem>,
+    pub total_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WireTransferItem {
+    pub relative_path: String,
+    pub size: u64,
+    #[serde(default)]
+    pub sha256: Option<String>,
+}
+
+impl LocalTransferManifest {
+    pub fn to_wire(&self) -> WireTransferManifest {
+        WireTransferManifest {
+            task_id: self.task_id.clone(),
+            root_name: self.root_name.clone(),
+            total_size: self.total_size,
+            files: self
+                .files
+                .iter()
+                .map(|item| WireTransferItem {
+                    relative_path: item.relative_path.clone(),
+                    size: item.size,
+                    sha256: item.sha256.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+pub type TransferManifest = LocalTransferManifest;
+pub type TransferItem = LocalTransferItem;
+
+pub fn scan_manifest(paths: &[PathBuf]) -> Result<LocalTransferManifest> {
     if paths.is_empty() {
         bail!("no paths supplied");
     }
@@ -340,11 +385,11 @@ pub fn scan_manifest(paths: &[PathBuf]) -> Result<TransferManifest> {
                 .ok_or_else(|| anyhow!("path has no file name: {}", path.display()))?
                 .to_string_lossy()
                 .to_string();
-            files.push(TransferItem {
+            files.push(LocalTransferItem {
                 relative_path: name,
                 size: meta.len(),
                 source_path: path.clone(),
-                sha256: Some(file_sha256(path)?),
+                sha256: None,
             });
         } else if meta.is_dir() {
             let root_name = path
@@ -357,11 +402,11 @@ pub fn scan_manifest(paths: &[PathBuf]) -> Result<TransferManifest> {
                 if entry.file_type().is_file() {
                     let rel = entry.path().strip_prefix(path)?;
                     let relative_path = normalize_relative_path(Path::new(&root_name).join(rel))?;
-                    files.push(TransferItem {
+                    files.push(LocalTransferItem {
                         relative_path,
                         size: entry.metadata()?.len(),
                         source_path: entry.path().to_path_buf(),
-                        sha256: Some(file_sha256(entry.path())?),
+                        sha256: None,
                     });
                 }
             }
@@ -379,7 +424,7 @@ pub fn scan_manifest(paths: &[PathBuf]) -> Result<TransferManifest> {
     } else {
         format!("{} items", paths.len())
     };
-    Ok(TransferManifest {
+    Ok(LocalTransferManifest {
         task_id: Uuid::new_v4().to_string(),
         root_name,
         files,
@@ -658,5 +703,31 @@ impl HistoryDb {
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let conn = Connection::open(&self.path)?;
         f(&conn)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wire_manifest_serialization_does_not_include_source_path() {
+        let manifest = LocalTransferManifest {
+            task_id: "task-1".to_string(),
+            root_name: "demo".to_string(),
+            total_size: 4,
+            files: vec![LocalTransferItem {
+                relative_path: "demo/a.txt".to_string(),
+                size: 4,
+                source_path: PathBuf::from(r"C:\Users\zhang\secret\a.txt"),
+                sha256: Some("abc".to_string()),
+            }],
+        };
+
+        let json = serde_json::to_string(&manifest.to_wire()).expect("serialize wire manifest");
+        assert!(!json.contains("source_path"));
+        assert!(!json.contains("C:\\"));
+        assert!(!json.contains("Users"));
+        assert!(json.contains("demo/a.txt"));
     }
 }

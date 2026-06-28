@@ -1,0 +1,33 @@
+{
+  "device_id": "win-node-01",
+  "device_name": "Windows Workstation",
+  "platform": "windows",
+  "bind_host": "127.0.0.1",
+  "port": 53317,
+  "peer_name": "Mac Studio",
+  "peer_host": "192.168.1.180",
+  "peer_port": 53318,
+  "receive_dir": "C:/Users/zhang/Downloads/Wormhole",
+  "auto_connect": true,
+  "clipboard": {
+    "enabled": true,
+    "text_enabled": true,
+    "image_enabled": true,
+    "max_image_bytes": 20971520,
+    "poll_millis": 750,
+    "remote_hash_window": 128
+  },
+  "transfer": {
+    "max_concurrent_tasks": 1,
+    "conflict_strategy": "rename",
+    "min_free_space_bytes": 67108864,
+    "verify_hash": true,
+    "resume_enabled": true
+  },
+  "connection": {
+    "heartbeat_millis": 5000,
+    "reconnect_millis": 3000
+  },
+  "history_retention_days": 30,
+  "retry_limit": 3
+}

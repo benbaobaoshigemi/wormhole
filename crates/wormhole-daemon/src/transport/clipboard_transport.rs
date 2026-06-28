@@ -1,6 +1,22 @@
 use anyhow::Result;
+use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
+
+#[derive(Debug, Deserialize)]
+struct ImagePrepareResponse {
+    accepted: bool,
+    #[allow(dead_code)]
+    reason: Option<String>,
+    offset: Option<u64>,
+    #[allow(dead_code)]
+    max_image_bytes: u64,
+}
+
+pub enum ClipboardUploadOutcome {
+    Uploaded,
+    Ignored { reason: Option<String> },
+}
 
 pub fn post_png_chunks(
     base_url: &str,
@@ -9,15 +25,20 @@ pub fn post_png_chunks(
     png: &[u8],
     token: Option<&str>,
     chunk_size: usize,
-) -> Result<()> {
+) -> Result<ClipboardUploadOutcome> {
     let prepare_url = format!("{base_url}/prepare");
-    let _: serde_json::Value = post_json(
+    let prepare: ImagePrepareResponse = post_json(
         &prepare_url,
         &json!({"hash":hash,"source_device_id":source_device_id,"size":png.len()}),
         token,
     )?;
+    if !prepare.accepted {
+        return Ok(ClipboardUploadOutcome::Ignored {
+            reason: prepare.reason,
+        });
+    }
 
-    let mut offset = 0usize;
+    let mut offset = prepare.offset.unwrap_or(0) as usize;
     while offset < png.len() {
         let end = (offset + chunk_size).min(png.len());
         let final_chunk = end >= png.len();
@@ -40,7 +61,7 @@ pub fn post_png_chunks(
         );
         post_bytes(&url, &[], token)?;
     }
-    Ok(())
+    Ok(ClipboardUploadOutcome::Uploaded)
 }
 
 fn post_json<T: serde::de::DeserializeOwned>(
@@ -72,7 +93,9 @@ fn url_escape(value: &str) -> String {
     value
         .bytes()
         .flat_map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => vec![b as char],
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![b as char]
+            }
             _ => format!("%{b:02X}").chars().collect(),
         })
         .collect()

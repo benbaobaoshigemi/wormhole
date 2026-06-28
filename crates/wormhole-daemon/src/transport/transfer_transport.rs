@@ -21,6 +21,7 @@ pub fn upload_file_chunks(
     sha256: Option<&str>,
     token: Option<&str>,
     chunk_size: usize,
+    mut on_progress: impl FnMut(u64) -> Result<()>,
 ) -> Result<()> {
     let mut file = StdFile::open(path)?;
     let status_url = append_optional_param(status_url, "sha256", sha256);
@@ -33,6 +34,7 @@ pub fn upload_file_chunks(
     file.seek(SeekFrom::Start(sent))?;
     if size == 0 {
         touch_empty(&base_url, token)?;
+        on_progress(0)?;
         return Ok(());
     }
     let mut buf = vec![0u8; chunk_size];
@@ -44,6 +46,7 @@ pub fn upload_file_chunks(
         let offset = sent;
         sent += n as u64;
         post_chunk(&base_url, offset, sent >= size, &buf[..n], token)?;
+        on_progress(n as u64)?;
     }
     Ok(())
 }
@@ -76,7 +79,7 @@ fn post_chunk(
 }
 
 fn touch_empty(base_url: &str, token: Option<&str>) -> Result<()> {
-    let url = base_url.replace("/api/transfer/upload-chunk/", "/api/transfer/touch/");
+    let url = base_url.replace("/peer/transfer/upload-chunk/", "/peer/transfer/touch/");
     let mut request = ureq::post(&url).timeout(Duration::from_secs(30));
     if let Some(token) = token {
         request = request.set("x-wormhole-token", token);
@@ -97,7 +100,9 @@ fn url_escape(value: &str) -> String {
     value
         .bytes()
         .flat_map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => vec![b as char],
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![b as char]
+            }
             _ => format!("%{b:02X}").chars().collect(),
         })
         .collect()

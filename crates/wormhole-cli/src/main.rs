@@ -35,49 +35,49 @@ async fn main() -> Result<()> {
     let client = Client::new();
     let url = |path: &str| format!("{}{}", args.api.trim_end_matches('/'), path);
     let response = match args.command {
-        Command::State => client.get(url("/api/state")).send().await?,
-        Command::Connect => client.post(url("/api/connect")).send().await?,
+        Command::State => client.get(url("/local/state")).send().await?,
+        Command::Connect => client.post(url("/local/connect")).send().await?,
         Command::Send { paths } => {
             let paths = paths
                 .into_iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect::<Vec<_>>();
             client
-                .post(url("/api/transfer/send"))
+                .post(url("/local/transfer/send"))
                 .json(&json!({ "paths": paths }))
                 .send()
                 .await?
         }
         Command::Cancel { task_id } => {
             client
-                .post(url("/api/transfer/cancel"))
+                .post(url("/local/transfer/cancel"))
                 .json(&json!({ "task_id": task_id }))
                 .send()
                 .await?
         }
-        Command::Retry => client.post(url("/api/transfer/retry")).send().await?,
-        Command::Tasks => client.get(url("/api/transfer/tasks")).send().await?,
-        Command::History => client.get(url("/api/transfer/history")).send().await?,
+        Command::Retry => client.post(url("/local/transfer/retry")).send().await?,
+        Command::Tasks => client.get(url("/local/transfer/tasks")).send().await?,
+        Command::History => client.get(url("/local/transfer/history")).send().await?,
         Command::ClearHistory => {
             client
-                .post(url("/api/transfer/history/clear"))
+                .post(url("/local/transfer/history/clear"))
                 .send()
                 .await?
         }
         Command::ClipboardText => {
             client
-                .post(url("/api/clipboard/system/read-send-text"))
+                .post(url("/local/clipboard/system/read-send-text"))
                 .send()
                 .await?
         }
         Command::ClipboardImage => {
             client
-                .post(url("/api/clipboard/system/read-send-image"))
+                .post(url("/local/clipboard/system/read-send-image"))
                 .send()
                 .await?
         }
-        Command::ClipboardEnable => client.post(url("/api/clipboard/enable")).send().await?,
-        Command::ClipboardDisable => client.post(url("/api/clipboard/disable")).send().await?,
+        Command::ClipboardEnable => client.post(url("/local/clipboard/enable")).send().await?,
+        Command::ClipboardDisable => client.post(url("/local/clipboard/disable")).send().await?,
     };
     let status = response.status();
     let text = response.text().await.context("read response body")?;

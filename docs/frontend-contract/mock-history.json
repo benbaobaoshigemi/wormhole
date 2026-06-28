@@ -1,0 +1,22 @@
+[
+  {
+    "task_id": "task-20260628-000",
+    "direction": "receive",
+    "peer_device_id": "mac-node-01",
+    "root_name": "Screenshots",
+    "item_count": 4,
+    "total_size": 8388608,
+    "transferred_size": 8388608,
+    "status": "completed",
+    "error": null,
+    "error_code": null,
+    "save_path": "C:/Users/zhang/Downloads/Wormhole",
+    "speed_bytes_per_sec": 4194304,
+    "eta_seconds": null,
+    "retry_count": 0,
+    "parent_task_id": null,
+    "attempt_id": null,
+    "created_at": "2026-06-28T09:40:00Z",
+    "updated_at": "2026-06-28T09:40:02Z"
+  }
+]

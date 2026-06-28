@@ -426,7 +426,7 @@ _verification_runtime_clipboard/clipboard-validation-result.json
 - PowerShell 剪贴板桥接。
 - macOS `pbcopy/pbpaste/osascript` 剪贴板桥接。
 - Base64 JSON 图片传输。
-- `/api/debug/fail-next-upload-after` 调试端点。
+- 历史阶段曾使用 `/api/debug/fail-next-upload-after` 调试端点；当前正式 Rust 原型已移除 `/api/*` 命名空间。
 - 内存任务表。
 - 内存事件窗口。
 - 当前简化 manifest 格式。
