@@ -142,7 +142,7 @@ def main() -> int:
                 "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
                 "<plist version=\"1.0\"><dict>\n"
                 "<key>CFBundleExecutable</key><string>Wormhole</string>\n"
-                "<key>CFBundleIdentifier</key><string>dev.wormhole.desktop.v4</string>\n"
+                "<key>CFBundleIdentifier</key><string>dev.wormhole.desktop</string>\n"
                 "<key>CFBundleName</key><string>Wormhole</string>\n"
                 "<key>CFBundleDisplayName</key><string>Wormhole</string>\n"
                 "<key>CFBundlePackageType</key><string>APPL</string>\n"

@@ -37,8 +37,12 @@ struct ServeArgs {
 async fn main() -> Result<()> {
     // 强制清除代理环境变量，避免局域网 P2P 流量被系统/VPN 代理劫持（ureq 会默认读取）
     for key in [
-        "http_proxy", "https_proxy", "all_proxy",
-        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
     ] {
         std::env::remove_var(key);
     }

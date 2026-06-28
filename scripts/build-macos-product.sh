@@ -35,8 +35,12 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>Wormhole</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>NSLocalNetworkUsageDescription</key><string>Wormhole needs local network access to connect to the paired computer and transfer files and clipboard data.</string>
+  <key>NSBonjourServices</key><array></array>
 </dict>
 </plist>
 PLIST
+
+codesign --force --deep --sign - "$APP"
 
 echo "Wormhole product output: $APP"

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::{
     env,
     io::{Read, Write},
@@ -10,7 +11,7 @@ fn main() -> Result<()> {
     let target = env::args()
         .nth(1)
         .unwrap_or_else(|| "192.168.1.183:53317".to_string());
-    let url = format!("http://{target}/api/handshake");
+    let url = format!("http://{target}/peer/handshake");
     println!("target={target}");
     println!("url={url}");
 
@@ -52,7 +53,7 @@ fn probe_manual_http(addr: SocketAddr) -> Result<()> {
         .context("manual HTTP connect failed")?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    stream.write_all(b"GET /api/handshake HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n")?;
+    stream.write_all(b"GET /peer/handshake HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n")?;
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
     let first = response.lines().next().unwrap_or("<empty>");
@@ -65,7 +66,9 @@ fn probe_ureq(url: &str) -> Result<()> {
     let response = ureq::get(url).timeout(Duration::from_secs(5)).call();
     match response {
         Ok(response) => {
-            println!("status={}", response.status());
+            let status = response.status();
+            let device: PublicDevice = response.into_json()?;
+            println!("status={status} device={} port={}", device.device_name, device.port);
             Ok(())
         }
         Err(err) => {
@@ -73,6 +76,12 @@ fn probe_ureq(url: &str) -> Result<()> {
             Err(err).context("ureq failed")
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct PublicDevice {
+    device_name: String,
+    port: u16,
 }
 
 fn probe_reqwest(url: &str) -> Result<()> {

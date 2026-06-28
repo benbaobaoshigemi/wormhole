@@ -1,11 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use std::{
-    fs::{self, OpenOptions},
+    fs,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command},
     thread,
     time::{Duration, Instant},
 };
+#[cfg(not(target_os = "macos"))]
+use std::{fs::OpenOptions, process::Stdio};
 use wormhole_core::AppConfig;
 
 use crate::local_api_client::LocalApiClient;
@@ -14,6 +16,8 @@ pub struct DaemonManager {
     config_path: PathBuf,
     log_dir: PathBuf,
     child: Option<Child>,
+    #[cfg(target_os = "macos")]
+    launch_agent_plist: Option<PathBuf>,
     client: LocalApiClient,
 }
 
@@ -31,13 +35,15 @@ impl DaemonManager {
             config_path,
             log_dir,
             child: None,
+            #[cfg(target_os = "macos")]
+            launch_agent_plist: None,
             client,
         };
 
         // 1. 检查是否有已运行的 daemon 实例。
         let target_daemon_exe = daemon_path()?;
-        let mut resolved_target_daemon = std::fs::canonicalize(&target_daemon_exe)
-            .unwrap_or(target_daemon_exe.clone());
+        let mut resolved_target_daemon =
+            std::fs::canonicalize(&target_daemon_exe).unwrap_or(target_daemon_exe.clone());
 
         let r_str = resolved_target_daemon.to_string_lossy();
         if r_str.starts_with(r"\\?\") {
@@ -150,6 +156,7 @@ impl DaemonManager {
             manager.launch_daemon()?;
         }
         manager.wait_until_ready()?;
+        manager.check_peer_reachability();
         Ok(manager)
     }
 
@@ -176,27 +183,47 @@ impl DaemonManager {
             let _ = child.kill();
             let _ = child.wait();
         }
+        #[cfg(target_os = "macos")]
+        if let Some(plist) = self.launch_agent_plist.take() {
+            let _ = unload_launch_agent(&plist);
+        }
+        let _ = stop_running_daemon(&self.client);
+    }
+
+    pub fn quit_all(&mut self) {
+        self.stop();
     }
 
     fn launch_daemon(&mut self) -> Result<()> {
-        let daemon = daemon_path()?;
-        let stdout = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.log_dir.join("daemon.out.log"))?;
-        let stderr = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.log_dir.join("daemon.err.log"))?;
-        let child = Command::new(&daemon)
-            .arg("--config")
-            .arg(&self.config_path)
-            .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr))
-            .spawn()
-            .with_context(|| format!("start daemon {}", daemon.display()))?;
-        self.child = Some(child);
-        Ok(())
+        #[cfg(target_os = "macos")]
+        {
+            let plist =
+                launch_daemon_with_launch_agent(&daemon_path()?, &self.config_path, &self.log_dir)?;
+            self.launch_agent_plist = Some(plist);
+            return Ok(());
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let daemon = daemon_path()?;
+            let stdout = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.log_dir.join("daemon.out.log"))?;
+            let stderr = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.log_dir.join("daemon.err.log"))?;
+            let child = Command::new(&daemon)
+                .arg("--config")
+                .arg(&self.config_path)
+                .stdout(Stdio::from(stdout))
+                .stderr(Stdio::from(stderr))
+                .spawn()
+                .with_context(|| format!("start daemon {}", daemon.display()))?;
+            self.child = Some(child);
+            Ok(())
+        }
     }
 
     fn wait_until_ready(&self) -> Result<()> {
@@ -210,6 +237,35 @@ impl DaemonManager {
         Err(anyhow!(
             "daemon did not become ready; port may be occupied or config is invalid"
         ))
+    }
+
+    fn check_peer_reachability(&self) {
+        if self.client.connect().is_ok() {
+            return;
+        }
+
+        let Ok(state) = self.client.state() else {
+            return;
+        };
+        let Some(diagnostics) = state.diagnostics else {
+            return;
+        };
+        let Some(error) = diagnostics.last_handshake_error else {
+            return;
+        };
+
+        #[cfg(target_os = "macos")]
+        if looks_like_local_network_privacy_denial(&error) {
+            eprintln!(
+                "macOS local network access appears blocked for Wormhole; peer={}:{} error={}",
+                state.settings.peer_host, state.settings.peer_port, error
+            );
+            let _ = open::that(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork",
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = error;
     }
 }
 
@@ -257,6 +313,168 @@ fn daemon_path() -> Result<PathBuf> {
         return Ok(dev_path);
     }
     Err(anyhow!("bundled daemon not found next to launcher"))
+}
+
+#[cfg(target_os = "macos")]
+fn looks_like_local_network_privacy_denial(error: &str) -> bool {
+    error.contains("No route to host") || error.contains("os error 65")
+}
+
+#[cfg(target_os = "macos")]
+fn launch_daemon_with_launch_agent(
+    daemon: &Path,
+    config_path: &Path,
+    log_dir: &Path,
+) -> Result<PathBuf> {
+    fs::create_dir_all(log_dir)?;
+    let launch_agents = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("HOME is not set"))?
+        .join("Library")
+        .join("LaunchAgents");
+    fs::create_dir_all(&launch_agents)?;
+
+    let plist = launch_agents.join("dev.wormhole.daemon.plist");
+    let stdout = log_dir.join("daemon.out.log");
+    let stderr = log_dir.join("daemon.err.log");
+    let working_dir = daemon
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or(std::env::current_dir()?);
+
+    let _ = unload_launch_agent(&plist);
+    fs::write(
+        &plist,
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.wormhole.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{}</string>
+    <string>--config</string>
+    <string>{}</string>
+  </array>
+  <key>WorkingDirectory</key><string>{}</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>{}</string>
+  <key>StandardErrorPath</key><string>{}</string>
+</dict>
+</plist>
+"#,
+            plist_escape(&daemon.to_string_lossy()),
+            plist_escape(&config_path.to_string_lossy()),
+            plist_escape(&working_dir.to_string_lossy()),
+            plist_escape(&stdout.to_string_lossy()),
+            plist_escape(&stderr.to_string_lossy())
+        ),
+    )?;
+
+    let domain = launchctl_domain()?;
+    let output = Command::new("launchctl")
+        .args(["bootstrap", &domain, &plist.to_string_lossy()])
+        .output()
+        .context("start daemon with launchctl bootstrap")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "launchctl bootstrap failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(plist)
+}
+
+#[cfg(target_os = "macos")]
+fn unload_launch_agent(plist: &Path) -> Result<()> {
+    if !plist.exists() {
+        return Ok(());
+    }
+    let domain = launchctl_domain()?;
+    let _ = Command::new("launchctl")
+        .args(["bootout", &domain, &plist.to_string_lossy()])
+        .output();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn stop_running_daemon(client: &LocalApiClient) -> Result<()> {
+    let default_plist = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("HOME is not set"))?
+        .join("Library")
+        .join("LaunchAgents")
+        .join("dev.wormhole.daemon.plist");
+    let _ = unload_launch_agent(&default_plist);
+
+    let daemon_path = client
+        .state()
+        .ok()
+        .and_then(|state| state.diagnostics.map(|diag| diag.daemon_path))
+        .unwrap_or_else(|| {
+            daemon_path()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
+    if !daemon_path.is_empty() {
+        let _ = Command::new("pkill").args(["-f", &daemon_path]).output();
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn stop_running_daemon(client: &LocalApiClient) -> Result<()> {
+    let daemon_path = client
+        .state()
+        .ok()
+        .and_then(|state| state.diagnostics.map(|diag| diag.daemon_path))
+        .unwrap_or_else(|| {
+            daemon_path()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default()
+        });
+    if daemon_path.is_empty() {
+        return Ok(());
+    }
+    let escaped = daemon_path.replace('\'', "''");
+    let script = format!(
+        "Get-Process wormhole-daemon -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{}' }} | Stop-Process -Force",
+        escaped
+    );
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output();
+    Ok(())
+}
+
+#[cfg(all(not(target_os = "macos"), not(windows)))]
+fn stop_running_daemon(_client: &LocalApiClient) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_domain() -> Result<String> {
+    let output = Command::new("id")
+        .arg("-u")
+        .output()
+        .context("read current user id")?;
+    if !output.status.success() {
+        return Err(anyhow!("id -u failed"));
+    }
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(format!("gui/{uid}"))
+}
+
+#[cfg(target_os = "macos")]
+fn plist_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 #[cfg(windows)]

@@ -17,11 +17,13 @@ pub struct LocalState {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct DiagnosticsLocal {
     pub daemon_path: String,
     pub config_path: String,
     pub network_profile: String,
     pub firewall_status: String,
+    pub last_handshake_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,8 +32,11 @@ pub struct Device {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Settings {
     pub receive_dir: String,
+    pub peer_host: String,
+    pub peer_port: u16,
     pub clipboard: ClipboardSettings,
 }
 
@@ -62,6 +67,10 @@ impl LocalApiClient {
         let payload = json!({ "paths": paths });
         self.post_value("/local/transfer/send", payload)?;
         Ok(())
+    }
+
+    pub fn connect(&self) -> Result<Value> {
+        self.post_value("/local/connect", json!({}))
     }
 
     pub fn enable_clipboard(&self) -> Result<()> {

@@ -112,7 +112,7 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
             } else if id == open_logs.id() {
                 let _ = browser_open::open_path(daemon.log_dir());
             } else if id == quit.id() {
-                daemon.stop();
+                daemon.quit_all();
                 *control_flow = ControlFlow::Exit;
             }
         }
