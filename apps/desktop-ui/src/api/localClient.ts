@@ -1,19 +1,21 @@
-const BASE_URL = '/local';
+import { resolveApiBase } from './apiBase';
+
+const getBaseUrl = () => `${resolveApiBase()}/local`;
 
 export async function fetchState() {
-  const res = await fetch(`${BASE_URL}/state`);
+  const res = await fetch(`${getBaseUrl()}/state`);
   if (!res.ok) throw new Error('Failed to fetch state');
   return res.json();
 }
 
 export async function fetchSettings() {
-  const res = await fetch(`${BASE_URL}/settings`);
+  const res = await fetch(`${getBaseUrl()}/settings`);
   if (!res.ok) throw new Error('Failed to fetch settings');
   return res.json();
 }
 
 export async function updateSettings(settings: any) {
-  const res = await fetch(`${BASE_URL}/settings/update`, {
+  const res = await fetch(`${getBaseUrl()}/settings/update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings)
@@ -23,7 +25,7 @@ export async function updateSettings(settings: any) {
 }
 
 export async function sendTransfer(paths: string[]) {
-  const res = await fetch(`${BASE_URL}/transfer/send`, {
+  const res = await fetch(`${getBaseUrl()}/transfer/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ paths })
@@ -33,7 +35,7 @@ export async function sendTransfer(paths: string[]) {
 }
 
 export async function cancelTransfer(taskId: string) {
-  const res = await fetch(`${BASE_URL}/transfer/cancel`, {
+  const res = await fetch(`${getBaseUrl()}/transfer/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId })
@@ -43,7 +45,7 @@ export async function cancelTransfer(taskId: string) {
 }
 
 export async function retryTransfer(taskId: string) {
-  const res = await fetch(`${BASE_URL}/transfer/retry`, {
+  const res = await fetch(`${getBaseUrl()}/transfer/retry`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId })
@@ -53,19 +55,19 @@ export async function retryTransfer(taskId: string) {
 }
 
 export async function fetchTasks() {
-  const res = await fetch(`${BASE_URL}/transfer/tasks`);
+  const res = await fetch(`${getBaseUrl()}/transfer/tasks`);
   if (!res.ok) throw new Error('Failed to fetch tasks');
   return res.json();
 }
 
 export async function fetchHistory() {
-  const res = await fetch(`${BASE_URL}/transfer/history`);
+  const res = await fetch(`${getBaseUrl()}/transfer/history`);
   if (!res.ok) throw new Error('Failed to fetch history');
   return res.json();
 }
 
 export async function clearHistory() {
-  const res = await fetch(`${BASE_URL}/transfer/history/clear`, {
+  const res = await fetch(`${getBaseUrl()}/transfer/history/clear`, {
     method: 'POST'
   });
   if (!res.ok) throw new Error('Failed to clear history');
@@ -73,13 +75,13 @@ export async function clearHistory() {
 }
 
 export async function fetchClipboardStatus() {
-  const res = await fetch(`${BASE_URL}/clipboard/status`);
+  const res = await fetch(`${getBaseUrl()}/clipboard/status`);
   if (!res.ok) throw new Error('Failed to fetch clipboard status');
   return res.json();
 }
 
 export async function enableClipboard(kind: 'text' | 'image' | 'both') {
-  const res = await fetch(`${BASE_URL}/clipboard/enable`, {
+  const res = await fetch(`${getBaseUrl()}/clipboard/enable`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind })
@@ -89,7 +91,7 @@ export async function enableClipboard(kind: 'text' | 'image' | 'both') {
 }
 
 export async function disableClipboard(kind: 'text' | 'image' | 'both') {
-  const res = await fetch(`${BASE_URL}/clipboard/disable`, {
+  const res = await fetch(`${getBaseUrl()}/clipboard/disable`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind })

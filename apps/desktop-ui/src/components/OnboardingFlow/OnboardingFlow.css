@@ -1,0 +1,117 @@
+.onboarding-overlay {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  background-color: var(--bg-base);
+  align-items: center;
+  justify-content: center;
+}
+
+.onboarding-window {
+  width: 700px;
+  height: 450px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  overflow: hidden;
+}
+
+.onboarding-sidebar {
+  width: 220px;
+  background: rgba(26, 29, 36, 0.5);
+  border-right: 1px solid var(--border-color);
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ob-logo {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 40px;
+  color: var(--accent-primary);
+}
+
+.ob-steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ob-steps li {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  position: relative;
+  padding-left: 16px;
+  transition: all var(--transition-smooth);
+}
+
+.ob-steps li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: all var(--transition-smooth);
+}
+
+.ob-steps li.active {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.ob-steps li.active::before {
+  background: var(--accent-primary);
+  box-shadow: 0 0 8px var(--accent-primary);
+}
+
+.onboarding-content {
+  flex: 1;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.ob-step-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  animation: slideInRight 0.3s ease;
+}
+
+.ob-step-pane h2 {
+  font-size: 1.75rem;
+  margin-bottom: 12px;
+}
+
+.ob-step-pane p {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.ob-spacer {
+  flex: 1;
+}
+
+.ob-features-list {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--bg-elevated);
+  padding: 20px;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-color);
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}

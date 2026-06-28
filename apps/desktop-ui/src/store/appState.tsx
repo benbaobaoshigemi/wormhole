@@ -58,9 +58,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         const state = await fetchState();
         setDaemonStatus('connected');
-        setConnectionStatus(state.state.connection_status);
-        setPeer(state.state.peer || null);
-        setSettings(state.config || null);
+        setConnectionStatus(state.status);
+        setPeer(state.peer || null);
+        setSettings(state.settings || null);
         
         await refreshTasks();
         await refreshHistory();

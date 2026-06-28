@@ -1,3 +1,5 @@
+import { resolveEventUrl } from './apiBase';
+
 let eventSource: EventSource | null = null;
 type EventHandler = (event: any) => void;
 const listeners = new Map<string, Set<EventHandler>>();
@@ -5,7 +7,7 @@ const listeners = new Map<string, Set<EventHandler>>();
 export function connectEvents() {
   if (eventSource) return;
 
-  eventSource = new EventSource('/local/events');
+  eventSource = new EventSource(resolveEventUrl('/local/events'));
 
   eventSource.onmessage = (msg) => {
     try {

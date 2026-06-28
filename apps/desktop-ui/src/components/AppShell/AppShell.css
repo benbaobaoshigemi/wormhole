@@ -1,0 +1,87 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  overflow: hidden;
+  position: relative;
+}
+
+.shell-header {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background-color: rgba(26, 29, 36, 0.8);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-color);
+  -webkit-app-region: drag; /* Support desktop window dragging */
+}
+
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  -webkit-app-region: no-drag;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.status-connected { color: var(--accent-success); background-color: var(--accent-success); }
+.status-connecting { color: var(--accent-warning); background-color: var(--accent-warning); }
+.status-disconnected { color: var(--accent-danger); background-color: var(--accent-danger); }
+
+.device-names {
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.peer-device.muted {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.device-separator {
+  color: var(--text-muted);
+}
+
+.icon-btn {
+  padding: 6px;
+  border-radius: var(--border-radius-sm);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:hover {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.shell-main {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-loading, .shell-error {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
