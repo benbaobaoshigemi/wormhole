@@ -18,6 +18,7 @@ use crate::{
 };
 
 pub async fn handshake(State(state): State<AppState>) -> Json<PublicDevice> {
+    *state.incoming_traffic_received.write().await = true;
     Json(PublicDevice::from(&*state.config.read().await))
 }
 
@@ -26,6 +27,7 @@ pub async fn prepare_transfer(
     headers: HeaderMap,
     Json(manifest): Json<WireTransferManifest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    *state.incoming_traffic_received.write().await = true;
     auth::verify_peer_auth(&state, &headers).await?;
     transfer::prepare_transfer(&state, manifest).await
 }
@@ -36,6 +38,7 @@ pub async fn upload_status(
     Query(query): Query<UploadQuery>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    *state.incoming_traffic_received.write().await = true;
     auth::verify_peer_auth(&state, &headers).await?;
     transfer::upload_status(&state, &task_id, query).await
 }
@@ -47,6 +50,7 @@ pub async fn upload_chunk(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    *state.incoming_traffic_received.write().await = true;
     auth::verify_peer_auth(&state, &headers).await?;
     transfer::upload_chunk(&state, &task_id, query, body).await
 }
@@ -57,6 +61,7 @@ pub async fn touch_empty_file(
     Query(query): Query<UploadQuery>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    *state.incoming_traffic_received.write().await = true;
     auth::verify_peer_auth(&state, &headers).await?;
     transfer::touch_empty_file(&state, &task_id, query).await
 }
@@ -66,6 +71,7 @@ pub async fn receive_text(
     headers: HeaderMap,
     Json(req): Json<ReceiveText>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    *state.incoming_traffic_received.write().await = true;
     auth::verify_peer_auth(&state, &headers).await?;
     clipboard::receive_text(&state, req).await
 }
@@ -75,6 +81,7 @@ pub async fn prepare_image_clipboard(
     headers: HeaderMap,
     Json(req): Json<ImagePrepareRequest>,
 ) -> Result<Json<ImagePrepareResponse>, ApiError> {
+    *state.incoming_traffic_received.write().await = true;
     auth::verify_peer_auth(&state, &headers).await?;
     clipboard::prepare_image_clipboard(&state, req).await
 }
@@ -85,6 +92,7 @@ pub async fn receive_image_chunk(
     Query(query): Query<ImageChunkQuery>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    *state.incoming_traffic_received.write().await = true;
     auth::verify_peer_auth(&state, &headers).await?;
     clipboard::receive_image_chunk(&state, query, body).await
 }

@@ -1,4 +1,4 @@
-﻿export type ConnectionStatus = "unconfigured" | "connecting" | "connected" | "peer_offline" | "failed";
+export type ConnectionStatus = "unconfigured" | "connecting" | "connected" | "peer_offline" | "failed";
 export type TransferDirection = "send" | "receive";
 export type TransferStatus = "queued" | "transferring" | "completed" | "failed" | "cancelled" | "retrying" | "prepared";
 
@@ -77,6 +77,21 @@ export interface WormholeEvent {
   data: Record<string, unknown>;
 }
 
+export interface DiagnosticsDto {
+  daemon_path: string;
+  config_path: string;
+  bind_host: string;
+  local_port: number;
+  peer_host: string;
+  peer_port: number;
+  network_profile: string;
+  firewall_status: "ok" | "missing_rule" | "stale_program_path" | "blocked_by_rule" | "public_network" | "unknown";
+  incoming_traffic_received: boolean;
+  last_handshake_error?: string | null;
+  last_transfer_error_code?: string | null;
+  last_transfer_error_message?: string | null;
+}
+
 export interface StateDto {
   device: PublicDevice;
   status: ConnectionStatus;
@@ -87,4 +102,5 @@ export interface StateDto {
   recent_history_count: number;
   tasks: TransferTaskDto[];
   events: WormholeEvent[];
+  diagnostics: DiagnosticsDto;
 }

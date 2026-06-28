@@ -100,6 +100,22 @@ impl From<&TransferTask> for TransferTaskDto {
 pub type TransferHistoryDto = TransferTaskDto;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct DiagnosticsDto {
+    pub daemon_path: String,
+    pub config_path: String,
+    pub bind_host: String,
+    pub local_port: u16,
+    pub peer_host: String,
+    pub peer_port: u16,
+    pub network_profile: String,
+    pub firewall_status: String,
+    pub incoming_traffic_received: bool,
+    pub last_handshake_error: Option<String>,
+    pub last_transfer_error_code: Option<String>,
+    pub last_transfer_error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct StateDto {
     pub device: PublicDevice,
     pub status: ConnectionStatus,
@@ -110,6 +126,7 @@ pub struct StateDto {
     pub recent_history_count: usize,
     pub tasks: Vec<TransferTaskDto>,
     pub events: Vec<wormhole_core::Event>,
+    pub diagnostics: DiagnosticsDto,
 }
 
 #[derive(Debug, Clone, Serialize)]

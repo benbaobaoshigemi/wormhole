@@ -35,6 +35,14 @@ struct ServeArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // 强制清除代理环境变量，避免局域网 P2P 流量被系统/VPN 代理劫持（ureq 会默认读取）
+    for key in [
+        "http_proxy", "https_proxy", "all_proxy",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"
+    ] {
+        std::env::remove_var(key);
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter("wormhole_daemon=info,tower_http=warn")
         .init();
@@ -61,6 +69,12 @@ async fn main() -> Result<()> {
         transfer_slots,
         remote_hashes: Arc::new(Mutex::new(VecDeque::new())),
         clipboard: Arc::new(Mutex::new(SystemClipboard::new()?)),
+        incoming_traffic_received: Arc::new(RwLock::new(false)),
+        last_handshake_error: Arc::new(RwLock::new(None)),
+        last_transfer_error_code: Arc::new(RwLock::new(None)),
+        last_transfer_error_message: Arc::new(RwLock::new(None)),
+        firewall_status: Arc::new(RwLock::new("unknown".to_string())),
+        network_profile: Arc::new(RwLock::new("unknown".to_string())),
     };
     service::transfer::restore_tasks_from_db(&state).await?;
 
@@ -68,6 +82,8 @@ async fn main() -> Result<()> {
     tokio::spawn(async move { service::clipboard::clipboard_loop(app_state).await });
     let connection_state = state.clone();
     tokio::spawn(async move { service::connection::connection_loop(connection_state).await });
+    let firewall_state = state.clone();
+    tokio::spawn(async move { service::connection::firewall_loop(firewall_state).await });
     let history_state = state.clone();
     tokio::spawn(async move { service::history::history_prune_loop(history_state).await });
 

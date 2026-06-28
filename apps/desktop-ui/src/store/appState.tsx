@@ -1,4 +1,4 @@
-﻿import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { openEventStream } from "../localApi/events";
 import {
   fetchClipboardStatus,
@@ -15,6 +15,7 @@ import type {
   StateDto,
   TransferTaskDto,
   WormholeEvent,
+  DiagnosticsDto,
 } from "../localApi/dto";
 
 type DaemonStatus = "loading" | "online" | "offline";
@@ -31,6 +32,7 @@ interface AppStateValue {
   history: TransferTaskDto[];
   events: WormholeEvent[];
   lastError: string | null;
+  diagnostics: DiagnosticsDto | null;
   refreshState: () => Promise<void>;
   refreshTasks: () => Promise<void>;
   refreshHistory: () => Promise<void>;
@@ -60,6 +62,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [history, setHistory] = useState<TransferTaskDto[]>([]);
   const [events, setEvents] = useState<WormholeEvent[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsDto | null>(null);
 
   const applyState = useCallback((state: StateDto) => {
     setDaemonStatus("online");
@@ -70,6 +73,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setClipboard(state.clipboard);
     setTasks(state.tasks);
     setEvents(state.events);
+    setDiagnostics(state.diagnostics);
     setLastError(null);
   }, []);
 
@@ -151,6 +155,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       history,
       events,
       lastError,
+      diagnostics,
       refreshState,
       refreshTasks,
       refreshHistory,
@@ -166,6 +171,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       history,
       lastError,
       peer,
+      diagnostics,
       refreshClipboard,
       refreshHistory,
       refreshSettings,

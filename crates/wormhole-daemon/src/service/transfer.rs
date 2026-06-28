@@ -724,6 +724,8 @@ pub async fn mark_failed(
         .filter(|value| !value.trim().is_empty())
         .map(|value| format!("{public_error}: {value}"))
         .unwrap_or_else(|| public_error.to_string());
+    *state.last_transfer_error_code.write().await = Some(error_code.clone());
+    *state.last_transfer_error_message.write().await = Some(message.clone());
     update_task(
         state,
         task_id,
@@ -749,12 +751,15 @@ pub async fn mark_failed(
 }
 
 async fn mark_receive_failed(state: &AppState, task_id: &str, error_code: &str) -> Result<()> {
+    let msg = public_error_message(error_code).to_string();
+    *state.last_transfer_error_code.write().await = Some(error_code.to_string());
+    *state.last_transfer_error_message.write().await = Some(msg.clone());
     update_task(
         state,
         task_id,
         TransferStatus::Failed,
         Some(error_code.to_string()),
-        Some(public_error_message(error_code).to_string()),
+        Some(msg),
         task_transferred_size(state, task_id).await,
     )
     .await

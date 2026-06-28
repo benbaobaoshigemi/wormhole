@@ -13,6 +13,15 @@ pub struct LocalState {
     pub status: String,
     pub peer: Option<Device>,
     pub settings: Settings,
+    pub diagnostics: Option<DiagnosticsLocal>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiagnosticsLocal {
+    pub daemon_path: String,
+    pub config_path: String,
+    pub network_profile: String,
+    pub firewall_status: String,
 }
 
 #[derive(Debug, Deserialize)]

@@ -4,8 +4,8 @@ use wormhole_core::{ConnectionStatus, PublicDevice, TransferStatus, TransferTask
 
 use crate::{
     dto::{
-        CancelRequest, ClipboardStatusDto, PublicSettingsDto, SendRequest, SettingsUpdateRequest,
-        StateDto, TransferHistoryDto, TransferTaskDto,
+        CancelRequest, ClipboardStatusDto, DiagnosticsDto, PublicSettingsDto, SendRequest,
+        SettingsUpdateRequest, StateDto, TransferHistoryDto, TransferTaskDto,
     },
     error::ApiError,
     service::{clipboard, connection, settings, transfer},
@@ -28,6 +28,31 @@ pub async fn state(State(state): State<AppState>) -> Json<StateDto> {
             )
         })
         .count();
+
+    let daemon_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "wormhole-daemon.exe".to_string());
+    let config_path = std::env::current_dir()
+        .map(|cd| cd.join(&state.config_path))
+        .unwrap_or(state.config_path.clone())
+        .to_string_lossy()
+        .to_string();
+
+    let diagnostics = DiagnosticsDto {
+        daemon_path,
+        config_path,
+        bind_host: config.bind_host.clone(),
+        local_port: config.port,
+        peer_host: config.peer.host.clone(),
+        peer_port: config.peer.port,
+        network_profile: state.network_profile.read().await.clone(),
+        firewall_status: state.firewall_status.read().await.clone(),
+        incoming_traffic_received: *state.incoming_traffic_received.read().await,
+        last_handshake_error: state.last_handshake_error.read().await.clone(),
+        last_transfer_error_code: state.last_transfer_error_code.read().await.clone(),
+        last_transfer_error_message: state.last_transfer_error_message.read().await.clone(),
+    };
+
     Json(StateDto {
         device: PublicDevice::from(&*config),
         status: state.status.read().await.clone(),
@@ -38,6 +63,7 @@ pub async fn state(State(state): State<AppState>) -> Json<StateDto> {
         recent_history_count: history_count,
         tasks: tasks.iter().map(TransferTaskDto::from).collect(),
         events: state.events.latest(100),
+        diagnostics,
     })
 }
 

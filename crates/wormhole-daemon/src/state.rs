@@ -62,6 +62,12 @@ pub struct AppState {
     pub transfer_slots: Arc<Semaphore>,
     pub remote_hashes: Arc<Mutex<VecDeque<String>>>,
     pub clipboard: Arc<Mutex<SystemClipboard>>,
+    pub incoming_traffic_received: Arc<RwLock<bool>>,
+    pub last_handshake_error: Arc<RwLock<Option<String>>>,
+    pub last_transfer_error_code: Arc<RwLock<Option<String>>>,
+    pub last_transfer_error_message: Arc<RwLock<Option<String>>>,
+    pub firewall_status: Arc<RwLock<String>>,
+    pub network_profile: Arc<RwLock<String>>,
 }
 
 impl AppState {

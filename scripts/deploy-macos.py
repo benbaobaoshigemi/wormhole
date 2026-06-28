@@ -142,12 +142,17 @@ def main() -> int:
                 "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
                 "<plist version=\"1.0\"><dict>\n"
                 "<key>CFBundleExecutable</key><string>Wormhole</string>\n"
-                "<key>CFBundleIdentifier</key><string>dev.wormhole.desktop</string>\n"
+                "<key>CFBundleIdentifier</key><string>dev.wormhole.desktop.v4</string>\n"
                 "<key>CFBundleName</key><string>Wormhole</string>\n"
+                "<key>CFBundleDisplayName</key><string>Wormhole</string>\n"
                 "<key>CFBundlePackageType</key><string>APPL</string>\n"
                 "<key>CFBundleShortVersionString</key><string>0.1.0</string>\n"
+                "<key>CFBundleVersion</key><string>0.1.0</string>\n"
+                "<key>NSLocalNetworkUsageDescription</key><string>Wormhole needs local network access to connect to the paired Windows computer and transfer files and clipboard data.</string>\n"
+                "<key>NSBonjourServices</key><array></array>\n"
                 "</dict></plist>\n"
-                "PLIST"
+                "PLIST && "
+                "codesign --force --deep --sign - target/product/macos/Wormhole.app"
             ),
         ]
         for command in commands:

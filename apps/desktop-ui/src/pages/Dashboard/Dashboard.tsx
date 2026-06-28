@@ -1,15 +1,40 @@
-﻿import { Clipboard, FolderOpen, Laptop, Link2, Send } from "lucide-react";
+import { Clipboard, FolderOpen, Laptop, Link2, Send, AlertCircle } from "lucide-react";
 import { useAppState } from "../../store/appState";
 import EdgeEntry from "../../components/EdgeEntry/EdgeEntry";
 import TransferCard from "../../components/TransferCard/TransferCard";
 
 export default function Dashboard() {
-  const { device, peer, connectionStatus, settings, clipboard, tasks, history, refreshTasks } = useAppState();
+  const { device, peer, connectionStatus, settings, clipboard, tasks, history, diagnostics, refreshTasks } = useAppState();
   const active = tasks.filter((task) => ["queued", "prepared", "transferring", "retrying"].includes(task.status));
   const recent = history.slice(0, 3);
 
+  const showFirewallWarning = device?.platform === "windows" && diagnostics && diagnostics.firewall_status !== "ok" && diagnostics.firewall_status !== "unknown";
+  const showConnectionWarning = connectionStatus === "peer_offline" && diagnostics?.incoming_traffic_received;
+
   return (
     <div className="page-grid">
+      {showFirewallWarning && (
+        <section className="panel warning-banner" style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "12px", borderLeft: "4px solid #e11d48", backgroundColor: "#fff1f2", color: "#9f1239", padding: "12px 16px", borderRadius: "6px" }}>
+          <AlertCircle size={20} />
+          <div>
+            <strong>防火墙限制：</strong>
+            {diagnostics.firewall_status === "public_network"
+              ? "当前网络不是专用网络 (Private)。Wormhole 限制仅在专用网络和本地子网下被连接，当前网络下可能无法被对端连接。"
+              : "Windows 入站防火墙未放行，对端可能无法连接本机，文件发送可能失败。请重新运行或尝试修复防火墙规则。"}
+          </div>
+        </section>
+      )}
+
+      {showConnectionWarning && (
+        <section className="panel warning-banner" style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: "12px", borderLeft: "4px solid #f59e0b", backgroundColor: "#fef3c7", color: "#92400e", padding: "12px 16px", borderRadius: "6px" }}>
+          <AlertCircle size={20} />
+          <div>
+            <strong>连接警告：</strong>
+            收到过对端请求，但本机无法主动连接对端。文件发送可能失败，请检查对端防火墙、地址和端口。
+          </div>
+        </section>
+      )}
+
       <section className="connection-map">
         <article className="device-tile">
           <Laptop size={30} />
