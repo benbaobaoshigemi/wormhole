@@ -3,10 +3,10 @@
 // and allows overriding in production or Tauri env if needed.
 
 export function resolveApiBase(): string {
-  // Check if we are running inside the Tauri shell
-  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI__;
-  if (isTauri) {
-    // Connect directly to the local daemon bypassing Vite proxy to avoid SSE buffering/flapping
+  // Check if we are running inside Vite dev server in the browser
+  const isWebDev = typeof window !== 'undefined' && window.location.port === '5173';
+  if (!isWebDev) {
+    // Connect directly to the local daemon in production or Tauri shell
     return 'http://127.0.0.1:53317';
   }
 
@@ -17,6 +17,7 @@ export function resolveApiBase(): string {
   }
   return '';
 }
+
 
 export function resolveEventUrl(path: string): string {
   const base = resolveApiBase();
