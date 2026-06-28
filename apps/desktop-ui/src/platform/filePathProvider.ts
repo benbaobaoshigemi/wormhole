@@ -3,23 +3,24 @@
 // 2. developerManualPath: prompt/manual input for developers
 // 3. demoOnly: purely mock visual, no API call
 
-// For our current environment, since Tauri isn't fully integrated yet,
-// we will fallback to developerManualPath.
-
 export async function requestFilePath(): Promise<string[] | null> {
   // Check if we are in Tauri
   const isTauri = typeof window !== 'undefined' && (window as any).__TAURI__;
   
   if (isTauri) {
     try {
-      // In a real Tauri app, we'd use @tauri-apps/api/dialog
-      // const { open } = await import('@tauri-apps/api/dialog');
-      // const selected = await open({ multiple: true });
-      // return Array.isArray(selected) ? selected : (selected ? [selected] : null);
+      // In Tauri v2, we import from @tauri-apps/plugin-dialog
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        multiple: true,
+        directory: false,
+        title: "Wormhole - Select Files to Send"
+      });
       
-      // Since we don't have the package installed, we still fallback to prompt if undefined
+      if (!selected) return null;
+      return Array.isArray(selected) ? selected : [selected];
     } catch (e) {
-      console.warn('Tauri API failed', e);
+      console.warn('Tauri dialog plugin failed, falling back to manual prompt', e);
     }
   }
 
@@ -43,4 +44,28 @@ export async function requestDeveloperManualPath(): Promise<string[] | null> {
   }
   
   return [path];
+}
+export async function requestDirectoryPath(): Promise<string[] | null> {
+  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI__;
+  
+  if (isTauri) {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        multiple: false,
+        directory: true,
+        title: "Wormhole - Select Folder to Send"
+      });
+      
+      if (!selected) return null;
+      return [selected];
+    } catch (e) {
+      console.warn('Tauri dialog plugin failed', e);
+    }
+  }
+
+  // developerManualPath fallback
+  const userInput = window.prompt("Developer Path Mode: Please enter an absolute folder path to send.");
+  if (!userInput || userInput.trim() === '') return null;
+  return [userInput.trim()];
 }
