@@ -4,6 +4,11 @@ import { useAppState } from "../../store/appState";
 export default function Diagnostics() {
   const { diagnostics, events } = useAppState();
   const recent = [...events].reverse().slice(0, 10);
+  const firewallStatus =
+    diagnostics?.incoming_traffic_received &&
+    (diagnostics.firewall_status === "missing_rule" || diagnostics.firewall_status === "stale_program_path" || diagnostics.firewall_status === "unknown")
+      ? "ok"
+      : diagnostics?.firewall_status;
 
   return (
     <div className="single-column" style={{ maxWidth: "800px", margin: "0 auto", padding: "16px" }}>
@@ -43,19 +48,19 @@ export default function Diagnostics() {
                 style={{
                   fontWeight: "bold",
                   color:
-                    diagnostics?.firewall_status === "ok"
+                    firewallStatus === "ok"
                       ? "#10b981"
-                      : diagnostics?.firewall_status === "public_network"
+                      : firewallStatus === "public_network"
                       ? "#f59e0b"
                       : "#ef4444",
                 }}
               >
-                {diagnostics?.firewall_status === "ok" && "放行 (Ok)"}
-                {diagnostics?.firewall_status === "missing_rule" && "规则缺失 (missing_rule)"}
-                {diagnostics?.firewall_status === "stale_program_path" && "路径过期 (stale_program_path)"}
-                {diagnostics?.firewall_status === "blocked_by_rule" && "被拦截 (blocked_by_rule)"}
-                {diagnostics?.firewall_status === "public_network" && "公用网络限流 (public_network)"}
-                {diagnostics?.firewall_status === "unknown" && "未知 (unknown)"}
+                {firewallStatus === "ok" && "已验证连通 (Ok)"}
+                {firewallStatus === "missing_rule" && "规则缺失 (missing_rule)"}
+                {firewallStatus === "stale_program_path" && "路径过期 (stale_program_path)"}
+                {firewallStatus === "blocked_by_rule" && "被拦截 (blocked_by_rule)"}
+                {firewallStatus === "public_network" && "公用网络限流 (public_network)"}
+                {firewallStatus === "unknown" && "未知 (unknown)"}
                 {!diagnostics && "读取中..."}
               </span>
             </div>

@@ -8,8 +8,13 @@ export default function Dashboard() {
   const active = tasks.filter((task) => ["queued", "prepared", "transferring", "retrying"].includes(task.status));
   const recent = history.slice(0, 3);
 
-  const showFirewallWarning = device?.platform === "windows" && diagnostics && diagnostics.firewall_status !== "ok" && diagnostics.firewall_status !== "unknown";
-  const showConnectionWarning = connectionStatus === "peer_offline" && diagnostics?.incoming_traffic_received;
+  const hasVerifiedIncoming = diagnostics?.incoming_traffic_received === true;
+  const showFirewallWarning =
+    device?.platform === "windows" &&
+    diagnostics &&
+    !hasVerifiedIncoming &&
+    ["blocked_by_rule", "public_network"].includes(diagnostics.firewall_status);
+  const showConnectionWarning = connectionStatus === "peer_offline" && !peer && hasVerifiedIncoming;
 
   return (
     <div className="page-grid">

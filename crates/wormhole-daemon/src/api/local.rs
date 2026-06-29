@@ -38,6 +38,12 @@ pub async fn state(State(state): State<AppState>) -> Json<StateDto> {
         .to_string_lossy()
         .to_string();
 
+    let connection_status = state.status.read().await.clone();
+    let incoming_traffic_received = *state.incoming_traffic_received.read().await;
+    let raw_firewall_status = state.firewall_status.read().await.clone();
+    let firewall_status =
+        effective_firewall_status(&raw_firewall_status, incoming_traffic_received).to_string();
+
     let diagnostics = DiagnosticsDto {
         daemon_path,
         config_path,
@@ -46,8 +52,8 @@ pub async fn state(State(state): State<AppState>) -> Json<StateDto> {
         peer_host: config.peer.host.clone(),
         peer_port: config.peer.port,
         network_profile: state.network_profile.read().await.clone(),
-        firewall_status: state.firewall_status.read().await.clone(),
-        incoming_traffic_received: *state.incoming_traffic_received.read().await,
+        firewall_status,
+        incoming_traffic_received,
         last_handshake_error: state.last_handshake_error.read().await.clone(),
         last_transfer_error_code: state.last_transfer_error_code.read().await.clone(),
         last_transfer_error_message: state.last_transfer_error_message.read().await.clone(),
@@ -55,7 +61,7 @@ pub async fn state(State(state): State<AppState>) -> Json<StateDto> {
 
     Json(StateDto {
         device: PublicDevice::from(&*config),
-        status: state.status.read().await.clone(),
+        status: connection_status,
         peer: state.peer.read().await.clone(),
         settings: PublicSettingsDto::from(&*config),
         clipboard: ClipboardStatusDto::from(&config.clipboard),
@@ -65,6 +71,15 @@ pub async fn state(State(state): State<AppState>) -> Json<StateDto> {
         events: state.events.latest(100),
         diagnostics,
     })
+}
+
+fn effective_firewall_status(status: &str, incoming_traffic_received: bool) -> &str {
+    if incoming_traffic_received
+        && matches!(status, "missing_rule" | "stale_program_path" | "unknown")
+    {
+        return "ok";
+    }
+    status
 }
 
 pub async fn get_settings(State(state): State<AppState>) -> Json<PublicSettingsDto> {
