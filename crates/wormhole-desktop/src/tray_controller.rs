@@ -1,11 +1,7 @@
 use anyhow::Result;
 use std::time::{Duration, Instant};
+use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tao::{
-    dpi::LogicalSize,
-    event::{Event, StartCause, WindowEvent},
-    window::{Window, WindowBuilder},
-};
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, TrayIconBuilder,
@@ -14,20 +10,40 @@ use tray_icon::{
 use crate::{
     browser_open,
     daemon_manager::DaemonManager,
+    dropzone_controller::{DropZoneAction, DropZoneEvent, DropZoneWindow},
     native_file_picker::{pick_files, pick_folder},
+    startup_controller,
 };
 
+#[derive(Clone, Debug)]
+enum TrayEvent {
+    DropZone(DropZoneEvent),
+}
+
+impl From<DropZoneEvent> for TrayEvent {
+    fn from(value: DropZoneEvent) -> Self {
+        Self::DropZone(value)
+    }
+}
+
 pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
-    let event_loop = EventLoopBuilder::new().build();
+    let event_loop = EventLoopBuilder::<TrayEvent>::with_user_event().build();
+    let event_proxy = event_loop.create_proxy();
     let menu = Menu::new();
     let status_item = MenuItem::new("状态：读取中", false, None);
     let peer_item = MenuItem::new("对端：-", false, None);
     let open_center = MenuItem::new("打开控制中心", true, None);
-    let open_drop_window = MenuItem::new("打开拖拽发送窗口", true, None);
+    let open_drop_window = MenuItem::new("打开原生拖拽投递", true, None);
     let send_file = MenuItem::new("发送文件", true, None);
     let send_folder = MenuItem::new("发送文件夹", true, None);
     let open_receive = MenuItem::new("打开接收目录", true, None);
     let clipboard_toggle = CheckMenuItem::new("剪贴板同步", true, false, None);
+    let startup_toggle = CheckMenuItem::new(
+        "开机启动 Wormhole",
+        true,
+        startup_controller::is_enabled().unwrap_or(false),
+        None,
+    );
     let restart = MenuItem::new("重新连接 / 重启 daemon", true, None);
     let open_logs = MenuItem::new("打开日志目录", true, None);
     let about = MenuItem::new("关于 Wormhole 0.1.0", false, None);
@@ -44,6 +60,7 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
         &open_receive,
         &PredefinedMenuItem::separator(),
         &clipboard_toggle,
+        &startup_toggle,
         &restart,
         &open_logs,
         &about,
@@ -51,15 +68,20 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
         &quit,
     ])?;
 
-    let _tray = TrayIconBuilder::new()
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut tray_builder = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("Wormhole")
-        .with_icon(wormhole_icon()?)
-        .build()?;
+        .with_icon(wormhole_icon()?);
+    #[cfg(target_os = "macos")]
+    {
+        tray_builder = tray_builder.with_icon_as_template(true);
+    }
+    let _tray = tray_builder.build()?;
 
     let menu_channel = MenuEvent::receiver();
     let mut last_state_refresh = Instant::now() - Duration::from_secs(60);
-    let mut drop_window: Option<Window> = None;
+    let mut drop_window: Option<DropZoneWindow> = None;
 
     let client = daemon.client();
     let control_center_url = daemon.control_center_url();
@@ -101,15 +123,20 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
                 .map(|window| window.id() == *window_id)
                 .unwrap_or(false)
             {
-                match event {
-                    WindowEvent::DroppedFile(path) => {
-                        let _ = client.send_paths(&[path.clone()]);
-                    }
-                    WindowEvent::CloseRequested => {
-                        drop_window = None;
-                    }
-                    _ => {}
+                if matches!(
+                    drop_window
+                        .as_ref()
+                        .map(|window| window.handle_window_event(event)),
+                    Some(DropZoneAction::Close)
+                ) {
+                    drop_window = None;
                 }
+            }
+        }
+
+        if let Event::UserEvent(TrayEvent::DropZone(event)) = &event {
+            if let Some(window) = &drop_window {
+                window.handle_drop_event(event.clone(), &client);
             }
         }
 
@@ -120,11 +147,12 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
             } else if id == open_drop_window.id() {
                 match &drop_window {
                     Some(window) => {
-                        window.set_visible(true);
-                        window.set_focus();
+                        window.show();
                     }
                     None => {
-                        if let Ok(window) = create_drop_window(event_loop_target) {
+                        if let Ok(window) =
+                            DropZoneWindow::new(event_loop_target, event_proxy.clone())
+                        {
                             drop_window = Some(window);
                         }
                     }
@@ -147,6 +175,11 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
                     let _ = client.enable_clipboard();
                     clipboard_toggle.set_checked(true);
                 }
+            } else if id == startup_toggle.id() {
+                let next = !startup_toggle.is_checked();
+                if startup_controller::set_enabled(next).is_ok() {
+                    startup_toggle.set_checked(next);
+                }
             } else if id == restart.id() {
                 let _ = daemon.restart();
             } else if id == open_logs.id() {
@@ -159,22 +192,13 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
     });
 }
 
-fn create_drop_window<T>(event_loop: &tao::event_loop::EventLoopWindowTarget<T>) -> Result<Window> {
-    let window = WindowBuilder::new()
-        .with_title("拖到这里发送到 Wormhole")
-        .with_inner_size(LogicalSize::new(380.0, 180.0))
-        .with_resizable(false)
-        .with_always_on_top(true)
-        .build(event_loop)?;
-    window.set_visible(true);
-    window.set_focus();
-    Ok(window)
-}
-
 fn wormhole_icon() -> Result<Icon> {
-    let image =
-        image::load_from_memory(include_bytes!("../../../assets/wormhole/wormhole-tray.png"))?
-            .into_rgba8();
+    #[cfg(target_os = "macos")]
+    let bytes = include_bytes!("../../../assets/wormhole/wormhole-tray-template.png").as_slice();
+    #[cfg(not(target_os = "macos"))]
+    let bytes = include_bytes!("../../../assets/wormhole/wormhole-tray.png").as_slice();
+
+    let image = image::load_from_memory(bytes)?.into_rgba8();
     let (width, height) = image.dimensions();
     Ok(Icon::from_rgba(image.into_raw(), width, height)?)
 }

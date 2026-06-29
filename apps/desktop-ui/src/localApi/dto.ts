@@ -33,6 +33,15 @@ export interface PublicSettingsDto {
     poll_millis?: number;
     remote_hash_window?: number;
   };
+  transfer?: {
+    max_concurrent_tasks: number;
+    parallel_chunk_uploads?: number;
+    chunk_size_bytes?: number;
+    conflict_strategy?: string;
+    min_free_space_bytes?: number;
+    verify_hash?: boolean;
+    resume_enabled?: boolean;
+  };
   retry_limit: number;
 }
 
@@ -48,6 +57,9 @@ export interface SettingsUpdateRequest {
   clipboard_image_enabled?: boolean;
   max_image_bytes?: number;
   retry_limit?: number;
+  max_concurrent_tasks?: number;
+  parallel_chunk_uploads?: number;
+  chunk_size_bytes?: number;
 }
 
 export interface TransferTaskDto {

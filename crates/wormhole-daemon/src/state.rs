@@ -19,6 +19,8 @@ pub struct ReceiveFileState {
     pub final_path: PathBuf,
     pub tmp_path: PathBuf,
     pub received_size: u64,
+    pub received_ranges: Vec<(u64, u64)>,
+    pub completion_started: bool,
     pub completed: bool,
 }
 

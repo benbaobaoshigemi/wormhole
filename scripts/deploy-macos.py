@@ -69,6 +69,8 @@ def fill_config_defaults(config: dict) -> dict:
         "transfer",
         {
             "max_concurrent_tasks": 2,
+            "parallel_chunk_uploads": 4,
+            "chunk_size_bytes": 2 * 1024 * 1024,
             "conflict_strategy": "rename",
             "min_free_space_bytes": 64 * 1024 * 1024,
             "verify_hash": True,
@@ -78,6 +80,13 @@ def fill_config_defaults(config: dict) -> dict:
     transfer = config["transfer"]
     transfer.setdefault("max_concurrent_tasks", 2)
     transfer["max_concurrent_tasks"] = max(int(transfer.get("max_concurrent_tasks") or 1), 2)
+    transfer.setdefault("parallel_chunk_uploads", 4)
+    transfer["parallel_chunk_uploads"] = max(int(transfer.get("parallel_chunk_uploads") or 1), 4)
+    transfer.setdefault("chunk_size_bytes", 2 * 1024 * 1024)
+    transfer["chunk_size_bytes"] = min(
+        max(int(transfer.get("chunk_size_bytes") or 64 * 1024), 64 * 1024),
+        2 * 1024 * 1024,
+    )
     transfer.setdefault("conflict_strategy", "rename")
     transfer.setdefault("min_free_space_bytes", 64 * 1024 * 1024)
     transfer.setdefault("verify_hash", True)
@@ -97,7 +106,6 @@ def main() -> int:
     host = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.180"
     password = (
         os.environ.get("WORMHOLE_REMOTE_PASSWORD")
-        or os.environ.get("WORMHOLE_MAC_PASSWORD")
         or getpass.getpass("macOS SSH password: ")
     )
     local_ip = local_ip_for(host)

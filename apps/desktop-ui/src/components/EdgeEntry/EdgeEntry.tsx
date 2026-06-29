@@ -5,10 +5,10 @@ export default function EdgeEntry() {
     <section className="panel edge-entry">
       <div className="panel-title">
         <PanelRight size={18} />
-        <h2>EdgeDropZone</h2>
+        <h2>原生拖拽投递</h2>
       </div>
-      <p className="muted">未接入。第一阶段仅保留入口和设置位，后续由系统层边缘投递能力接入。</p>
-      <span className="badge neutral">后续系统层功能</span>
+      <p className="muted">已接入桌面壳。拖拽路径由 Windows 托盘或 macOS 菜单栏打开的原生窗口获取，浏览器控制中心不读取本机文件路径。</p>
+      <span className="badge connected">可测试</span>
     </section>
   );
 }

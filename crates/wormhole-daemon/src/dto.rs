@@ -184,6 +184,9 @@ pub struct SettingsUpdateRequest {
     pub clipboard_image_enabled: Option<bool>,
     pub max_image_bytes: Option<u64>,
     pub retry_limit: Option<u32>,
+    pub max_concurrent_tasks: Option<usize>,
+    pub parallel_chunk_uploads: Option<usize>,
+    pub chunk_size_bytes: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

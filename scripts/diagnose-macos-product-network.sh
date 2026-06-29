@@ -46,22 +46,28 @@ if [ -n "$config_path" ] && [ -f "$config_path" ]; then
   echo "Peer Port   : $peer_port"
 else
   echo "Could not locate a config.json file automatically."
-  port=53318 # 备用默认端口
-  peer_host="127.0.0.1"
-  peer_port=53317
+  port="${WORMHOLE_LOCAL_PORT:-}"
+  peer_host="${WORMHOLE_PEER_HOST:-}"
+  peer_port="${WORMHOLE_PEER_PORT:-}"
 fi
 
 # 3. daemon 监听的端口
 echo -e "\n[3/7] Netstat Port Listening Status:"
-if command -v lsof >/dev/null 2>&1; then
+if [ -n "$port" ] && command -v lsof >/dev/null 2>&1; then
   lsof -i :"$port" | grep LISTEN
-else
+elif [ -n "$port" ]; then
   netstat -an | grep "$port" | grep LISTEN
+else
+  echo "Local port is unknown because no readable config was found."
 fi
 
 # 4. Local API State Test (curl http://127.0.0.1:<local_port>/local/state)
 echo -e "\n[4/7] Local API State Test (http://127.0.0.1:$port/local/state):"
-curl -s -v "http://127.0.0.1:$port/local/state" 2>&1
+if [ -n "$port" ]; then
+  curl -s -v "http://127.0.0.1:$port/local/state" 2>&1
+else
+  echo "Skipped because local port is unknown."
+fi
 
 # 5. Peer Handshake Test (curl http://<peer_host>:<peer_port>/peer/handshake)
 echo -e "\n[5/7] Peer Handshake Test (http://$peer_host:$peer_port/peer/handshake):"

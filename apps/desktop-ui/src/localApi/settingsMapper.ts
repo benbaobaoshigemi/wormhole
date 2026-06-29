@@ -12,6 +12,9 @@ export interface SettingsFormState {
   clipboard_image_enabled: boolean;
   max_image_bytes: number;
   retry_limit: number;
+  max_concurrent_tasks: number;
+  parallel_chunk_uploads: number;
+  chunk_size_bytes: number;
 }
 
 export function settingsToForm(settings: PublicSettingsDto): SettingsFormState {
@@ -27,6 +30,9 @@ export function settingsToForm(settings: PublicSettingsDto): SettingsFormState {
     clipboard_image_enabled: settings.clipboard.image_enabled,
     max_image_bytes: settings.clipboard.max_image_bytes,
     retry_limit: settings.retry_limit,
+    max_concurrent_tasks: settings.transfer?.max_concurrent_tasks ?? 2,
+    parallel_chunk_uploads: settings.transfer?.parallel_chunk_uploads ?? 4,
+    chunk_size_bytes: settings.transfer?.chunk_size_bytes ?? 2097152,
   };
 }
 
@@ -43,5 +49,8 @@ export function settingsFormToUpdate(form: SettingsFormState): SettingsUpdateReq
     clipboard_image_enabled: form.clipboard_image_enabled,
     max_image_bytes: Number(form.max_image_bytes),
     retry_limit: Number(form.retry_limit),
+    max_concurrent_tasks: Number(form.max_concurrent_tasks),
+    parallel_chunk_uploads: Number(form.parallel_chunk_uploads),
+    chunk_size_bytes: Number(form.chunk_size_bytes),
   };
 }

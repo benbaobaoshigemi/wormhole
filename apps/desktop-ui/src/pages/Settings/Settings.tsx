@@ -42,7 +42,13 @@ export default function SettingsPage() {
         <div className="panel">
           <h2>文件</h2>
           <label>接收目录<input value={form.receive_dir} onChange={(e) => setForm({ ...form, receive_dir: e.target.value })} /></label>
-          <p className="muted">发送文件请从系统托盘或菜单栏选择真实路径。</p>
+          <p className="muted">原生拖拽投递和文件选择会使用系统层真实路径。</p>
+        </div>
+        <div className="panel">
+          <h2>高速传输</h2>
+          <label>并行任务<input type="number" min={1} max={8} value={form.max_concurrent_tasks} onChange={(e) => setForm({ ...form, max_concurrent_tasks: Number(e.target.value) })} /></label>
+          <label>单文件连接<input type="number" min={1} max={16} value={form.parallel_chunk_uploads} onChange={(e) => setForm({ ...form, parallel_chunk_uploads: Number(e.target.value) })} /></label>
+          <label>分片大小 MB<input type="number" min={1} max={2} value={Math.max(1, Math.round(form.chunk_size_bytes / 1048576))} onChange={(e) => setForm({ ...form, chunk_size_bytes: Number(e.target.value) * 1048576 })} /></label>
         </div>
         <div className="panel">
           <h2>剪贴板</h2>

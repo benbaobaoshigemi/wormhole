@@ -63,7 +63,7 @@ label { display: grid; gap: 8px; color: #5d6675; font-size: 13px; font-weight: 6
   background: #eef2f6;
   color: #52606f;
 }
-.status-pill.connected, .badge.completed, .badge.ok { background: #dff7ea; color: #137044; }
+.status-pill.connected, .badge.completed, .badge.ok, .badge.connected { background: #dff7ea; color: #137044; }
 .badge.failed, .status-pill.failed { background: #ffe2e2; color: #a32626; }
 .badge.transferring, .badge.queued, .badge.retrying, .badge.prepared { background: #dfefff; color: #185c9d; }
 .badge.cancelled, .badge.neutral { background: #edf0f4; color: #5b6470; }

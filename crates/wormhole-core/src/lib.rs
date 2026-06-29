@@ -65,7 +65,12 @@ pub struct ClipboardSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferSettings {
+    #[serde(default = "default_max_concurrent_tasks")]
     pub max_concurrent_tasks: usize,
+    #[serde(default = "default_parallel_chunk_uploads")]
+    pub parallel_chunk_uploads: usize,
+    #[serde(default = "default_chunk_size_bytes")]
+    pub chunk_size_bytes: usize,
     pub conflict_strategy: ConflictStrategy,
     pub min_free_space_bytes: u64,
     pub verify_hash: bool,
@@ -75,13 +80,27 @@ pub struct TransferSettings {
 impl Default for TransferSettings {
     fn default() -> Self {
         Self {
-            max_concurrent_tasks: 2,
+            max_concurrent_tasks: default_max_concurrent_tasks(),
+            parallel_chunk_uploads: default_parallel_chunk_uploads(),
+            chunk_size_bytes: default_chunk_size_bytes(),
             conflict_strategy: ConflictStrategy::Rename,
             min_free_space_bytes: 64 * 1024 * 1024,
             verify_hash: true,
             resume_enabled: true,
         }
     }
+}
+
+fn default_max_concurrent_tasks() -> usize {
+    2
+}
+
+fn default_parallel_chunk_uploads() -> usize {
+    4
+}
+
+fn default_chunk_size_bytes() -> usize {
+    2 * 1024 * 1024
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

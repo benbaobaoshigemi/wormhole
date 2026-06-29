@@ -45,6 +45,15 @@ pub async fn update_settings(
     if let Some(value) = req.retry_limit {
         config.retry_limit = value;
     }
+    if let Some(value) = req.max_concurrent_tasks {
+        config.transfer.max_concurrent_tasks = value.clamp(1, 8);
+    }
+    if let Some(value) = req.parallel_chunk_uploads {
+        config.transfer.parallel_chunk_uploads = value.clamp(1, 16);
+    }
+    if let Some(value) = req.chunk_size_bytes {
+        config.transfer.chunk_size_bytes = value.clamp(64 * 1024, 2 * 1024 * 1024);
+    }
     config.save(&state.config_path)?;
     let dto = PublicSettingsDto::from(&*config);
     drop(config);

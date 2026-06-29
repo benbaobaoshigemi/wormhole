@@ -76,20 +76,24 @@ if ($configPath -and (Test-Path $configPath)) {
     $localPort = $json.port
   } catch {
     Write-Host "Failed to parse JSON config: $_" -ForegroundColor Red
-    $localPort = 53317
+    $localPort = $null
   }
 } else {
   Write-Host "Config file not found or could not be determined." -ForegroundColor Red
-  $localPort = 53317
+  $localPort = $null
 }
 
 # 5. netstat -ano 监听情况
 Write-Host "`n[5/10] Netstat Port Listening Status:" -ForegroundColor Yellow
-$netstat = netstat -ano | findstr LISTENING | findstr "$localPort"
-if ($netstat) {
-  Write-Host $netstat
+if ($localPort) {
+  $netstat = netstat -ano | findstr LISTENING | findstr "$localPort"
+  if ($netstat) {
+    Write-Host $netstat
+  } else {
+    Write-Host "No processes detected listening on local port $localPort." -ForegroundColor Red
+  }
 } else {
-  Write-Host "No processes detected listening on local port $localPort." -ForegroundColor Red
+  Write-Host "Local port is unknown because no readable config was found." -ForegroundColor Red
 }
 
 # 6. Windows 防火墙规则 - Wormhole 规则
@@ -145,19 +149,23 @@ if (-not $foundDaemonRule) {
 
 # 8. http://127.0.0.1:<local_port>/local/state 测试
 Write-Host "`n[8/10] Local API State Test (http://127.0.0.1:$localPort/local/state):" -ForegroundColor Yellow
-try {
-  $response = Invoke-RestMethod -Uri "http://127.0.0.1:$localPort/local/state" -Method Get -TimeoutSec 3
-  Write-Host "Local API Status: Online (200 OK)"
-  Write-Host "Device ID       : $($response.device.device_id)"
-  Write-Host "Device Name     : $($response.device.device_name)"
-  Write-Host "Status          : $($response.status)"
-  if ($response.peer) {
-    Write-Host "Peer Connected  : $($response.peer.device_name) ($($response.peer.host):$($response.peer.port))"
-  } else {
-    Write-Host "Peer Connected  : None"
+if ($localPort) {
+  try {
+    $response = Invoke-RestMethod -Uri "http://127.0.0.1:$localPort/local/state" -Method Get -TimeoutSec 3
+    Write-Host "Local API Status: Online (200 OK)"
+    Write-Host "Device ID       : $($response.device.device_id)"
+    Write-Host "Device Name     : $($response.device.device_name)"
+    Write-Host "Status          : $($response.status)"
+    if ($response.peer) {
+      Write-Host "Peer Connected  : $($response.peer.device_name) ($($response.peer.host):$($response.peer.port))"
+    } else {
+      Write-Host "Peer Connected  : None"
+    }
+  } catch {
+    Write-Host "Failed to request local state API: $_" -ForegroundColor Red
   }
-} catch {
-  Write-Host "Failed to request local state API: $_" -ForegroundColor Red
+} else {
+  Write-Host "Skipped because local port is unknown." -ForegroundColor Red
 }
 
 # 9. 本机 LAN IP
@@ -178,7 +186,11 @@ Write-Host "`n[10/10] Recommended Command to Run on Mac Peer:" -ForegroundColor 
 if ($lanIps) {
   $primaryIp = $lanIps[0].IPAddress
   Write-Host "Run the following command on your Mac to test connection to this Windows machine:"
-  Write-Host "curl -v http://$primaryIp`:$localPort/peer/handshake" -ForegroundColor Green
+  if ($localPort) {
+    Write-Host "curl -v http://$primaryIp`:$localPort/peer/handshake" -ForegroundColor Green
+  } else {
+    Write-Host "Local port is unknown; read config/config.json first." -ForegroundColor Red
+  }
 } else {
   Write-Host "No active LAN IP address found to suggest test curl command." -ForegroundColor Red
 }

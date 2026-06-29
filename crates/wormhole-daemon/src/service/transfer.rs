@@ -5,14 +5,11 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
+    io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
-use tokio::{
-    fs::{self, OpenOptions},
-    io::AsyncWriteExt,
-    sync::mpsc,
-};
+use tokio::{fs, sync::mpsc};
 use wormhole_core::{
     file_sha256, file_sha256_with_progress, normalize_relative_path, safe_join, scan_manifest,
     ConflictStrategy, LocalTransferManifest, TransferDirection, TransferStatus, TransferTask,
@@ -26,7 +23,6 @@ use crate::{
     transport::transfer_transport,
 };
 
-pub const CHUNK_SIZE: usize = 1024 * 1024;
 pub const MAX_CHUNK_SIZE: usize = 2 * 1024 * 1024;
 pub const MAX_MANIFEST_FILES: usize = 100_000;
 
@@ -40,6 +36,7 @@ pub struct UploadQuery {
 #[derive(Debug, Deserialize)]
 pub struct ChunkQuery {
     pub path: String,
+    #[allow(dead_code)]
     pub final_chunk: bool,
     #[serde(default)]
     pub offset: u64,
@@ -125,6 +122,11 @@ pub async fn run_send_transfer(
     .await?;
     let config = state.config.read().await.clone();
     let base = config.peer_base_url();
+    let upload_chunk_size = config
+        .transfer
+        .chunk_size_bytes
+        .clamp(64 * 1024, MAX_CHUNK_SIZE);
+    let parallel_chunk_uploads = config.transfer.parallel_chunk_uploads.clamp(1, 16);
     let token = config.shared_token.clone();
     let prepare_url = format!("{base}/peer/transfer/prepare");
     let wire = manifest.to_wire();
@@ -253,7 +255,8 @@ pub async fn run_send_transfer(
                 size,
                 Some(&sha256),
                 token.as_deref(),
-                CHUNK_SIZE,
+                upload_chunk_size,
+                parallel_chunk_uploads,
                 |delta| {
                     let _ = tx.send(delta);
                     Ok(())
@@ -366,6 +369,8 @@ pub async fn prepare_transfer(
                 final_path,
                 tmp_path,
                 received_size: 0,
+                received_ranges: Vec::new(),
+                completion_started: false,
                 completed: false,
             },
         );
@@ -488,16 +493,33 @@ pub async fn upload_status(
     })?;
     bind_or_check_sha256(file, query.sha256.as_deref())?;
     if file.completed {
-        return Ok(Json(
-            json!({"ok":true,"complete":true,"offset":file.expected_size}),
-        ));
+        return Ok(Json(json!({
+            "ok": true,
+            "complete": true,
+            "offset": file.expected_size,
+            "received_ranges": [[0, file.expected_size]],
+            "parallel_upload": true
+        })));
     }
-    file.received_size = std::fs::metadata(&file.tmp_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    Ok(Json(
-        json!({"ok":true,"complete":false,"offset":file.received_size}),
-    ))
+    if file.received_ranges.is_empty() {
+        let len = std::fs::metadata(&file.tmp_path)
+            .map(|m| m.len().min(file.expected_size))
+            .unwrap_or(0);
+        if len > 0 {
+            file.received_ranges.push((0, len));
+            file.received_size = len;
+        }
+    }
+    let offset = contiguous_prefix(&file.received_ranges);
+    let ranges = json_ranges(&file.received_ranges);
+    Ok(Json(json!({
+        "ok": true,
+        "complete": false,
+        "offset": offset,
+        "received_size": file.received_size,
+        "received_ranges": ranges,
+        "parallel_upload": true
+    })))
 }
 
 pub async fn upload_chunk(
@@ -513,6 +535,7 @@ pub async fn upload_chunk(
             anyhow!("chunk too large"),
         ));
     }
+    let chunk_len = body.len() as u64;
     let (tmp_path, final_path, expected_size, expected_sha256, relative_path) = {
         let mut lock = state.receive_tasks.lock().await;
         let task = lock.get_mut(task_id).ok_or_else(|| {
@@ -530,15 +553,17 @@ pub async fn upload_chunk(
             )
         })?;
         bind_or_check_sha256(file, query.sha256.as_deref())?;
-        if query.offset != file.received_size {
-            return Err(ApiError::status(
-                StatusCode::CONFLICT,
-                "offset_mismatch",
-                anyhow!("upload offset mismatch"),
-            ));
+        if file.completed || file.completion_started {
+            return Ok(Json(json!({
+                "ok": true,
+                "received": 0,
+                "offset": contiguous_prefix(&file.received_ranges),
+                "complete": file.completed,
+                "duplicate": true
+            })));
         }
         if query.offset > file.expected_size
-            || query.offset.saturating_add(body.len() as u64) > file.expected_size
+            || query.offset.saturating_add(chunk_len) > file.expected_size
         {
             return Err(ApiError::status(
                 StatusCode::BAD_REQUEST,
@@ -554,41 +579,48 @@ pub async fn upload_chunk(
             file.relative_path.clone(),
         )
     };
-    if let Some(parent) = tmp_path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    let current_len = std::fs::metadata(&tmp_path).map(|m| m.len()).unwrap_or(0);
-    if current_len != query.offset {
-        return Err(ApiError::status(
-            StatusCode::CONFLICT,
-            "offset_mismatch",
-            anyhow!("tmp file offset mismatch"),
-        ));
-    }
-    {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&tmp_path)
-            .await?;
-        file.write_all(&body).await?;
-        file.flush().await?;
-    }
-    let new_size = query.offset + body.len() as u64;
-    if query.final_chunk {
-        if new_size != expected_size {
-            return Err(ApiError::status(
-                StatusCode::BAD_REQUEST,
-                "size_mismatch",
-                anyhow!("final chunk size mismatch"),
-            ));
+    write_chunk_at(tmp_path.clone(), query.offset, body).await?;
+    let new_end = query.offset.saturating_add(chunk_len);
+    let (added, complete_after_write) = {
+        let mut lock = state.receive_tasks.lock().await;
+        let task = lock.get_mut(task_id).ok_or_else(|| {
+            ApiError::status(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                anyhow!("task not found"),
+            )
+        })?;
+        let file = task.files.get_mut(&query.path).ok_or_else(|| {
+            ApiError::status(
+                StatusCode::NOT_FOUND,
+                "path_not_found",
+                anyhow!("path not in manifest"),
+            )
+        })?;
+        if file.completed {
+            (0, false)
+        } else {
+            let added = merge_received_range(&mut file.received_ranges, query.offset, new_end);
+            file.received_size = file
+                .received_size
+                .saturating_add(added)
+                .min(file.expected_size);
+            let complete_after_write =
+                file.received_size == file.expected_size && !file.completion_started;
+            if complete_after_write {
+                file.completion_started = true;
+            }
+            (added, complete_after_write)
         }
+    };
+    if complete_after_write {
         let actual_tmp_size = std::fs::metadata(&tmp_path).map(|m| m.len()).unwrap_or(0);
-        if actual_tmp_size != expected_size {
+        if actual_tmp_size < expected_size {
+            mark_receive_failed(state, task_id, "integrity").await?;
             return Err(ApiError::status(
-                StatusCode::BAD_REQUEST,
-                "size_mismatch",
-                anyhow!("tmp file size mismatch"),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "integrity",
+                anyhow!("tmp file is incomplete after all ranges were received"),
             ));
         }
         if let Some(expected) = expected_sha256.as_deref() {
@@ -615,40 +647,24 @@ pub async fn upload_chunk(
             fs::create_dir_all(parent).await?;
         }
         fs::rename(&tmp_path, &final_path).await?;
-    }
-    {
-        let mut lock = state.receive_tasks.lock().await;
-        let task = lock.get_mut(task_id).ok_or_else(|| {
-            ApiError::status(
-                StatusCode::NOT_FOUND,
-                "task_not_found",
-                anyhow!("task not found"),
-            )
-        })?;
-        let file = task.files.get_mut(&query.path).ok_or_else(|| {
-            ApiError::status(
-                StatusCode::NOT_FOUND,
-                "path_not_found",
-                anyhow!("path not in manifest"),
-            )
-        })?;
-        file.received_size = new_size;
-        if query.final_chunk {
-            file.completed = true;
-        }
+        mark_file_completed(state, task_id, &query.path).await?;
     }
     record_chunk_received(
         state,
         task_id,
         &relative_path,
-        body.len() as u64,
-        query.final_chunk,
+        added,
+        complete_after_write,
         final_path.clone(),
     )
     .await?;
-    Ok(Json(
-        json!({"ok":true,"received":body.len(),"offset":new_size}),
-    ))
+    Ok(Json(json!({
+        "ok": true,
+        "received": added,
+        "offset": contiguous_file_prefix(state, task_id, &query.path).await?,
+        "range": [query.offset, new_end],
+        "complete": complete_after_write
+    })))
 }
 
 pub async fn touch_empty_file(
@@ -680,6 +696,10 @@ pub async fn touch_empty_file(
             ));
         }
         file.completed = true;
+        file.completion_started = true;
+        file.received_size = 0;
+        file.received_ranges.clear();
+        file.received_ranges.push((0, 0));
         file.final_path.clone()
     };
     if let Some(parent) = final_path.parent() {
@@ -949,6 +969,109 @@ async fn update_progress(
         }),
     );
     Ok(())
+}
+
+async fn write_chunk_at(path: PathBuf, offset: u64, body: Bytes) -> Result<()> {
+    let data = body.to_vec();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        file.write_all(&data)?;
+        file.flush()?;
+        Ok(())
+    })
+    .await?
+}
+
+async fn mark_file_completed(state: &AppState, task_id: &str, relative_path: &str) -> Result<()> {
+    let mut lock = state.tasks.lock().await;
+    if let Some(task) = lock.get_mut(task_id) {
+        task.phase = None;
+        task.current_file = None;
+        task.preflight_bytes = 0;
+        task.preflight_total_bytes = 0;
+        task.updated_at = Utc::now();
+    }
+    drop(lock);
+
+    let mut receive_lock = state.receive_tasks.lock().await;
+    if let Some(task) = receive_lock.get_mut(task_id) {
+        if let Some(file) = task.files.get_mut(relative_path) {
+            file.completed = true;
+            file.received_size = file.expected_size;
+            file.received_ranges.clear();
+            file.received_ranges.push((0, file.expected_size));
+        }
+    }
+    Ok(())
+}
+
+async fn contiguous_file_prefix(
+    state: &AppState,
+    task_id: &str,
+    relative_path: &str,
+) -> Result<u64> {
+    let lock = state.receive_tasks.lock().await;
+    let Some(task) = lock.get(task_id) else {
+        bail!("task not found");
+    };
+    let Some(file) = task.files.get(relative_path) else {
+        bail!("path not found");
+    };
+    Ok(contiguous_prefix(&file.received_ranges))
+}
+
+fn merge_received_range(ranges: &mut Vec<(u64, u64)>, start: u64, end: u64) -> u64 {
+    if end <= start {
+        return 0;
+    }
+    let before = total_range_bytes(ranges);
+    ranges.push((start, end));
+    ranges.sort_by_key(|range| range.0);
+
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges.drain(..) {
+        if let Some(last) = merged.last_mut() {
+            if start <= last.1 {
+                last.1 = last.1.max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    *ranges = merged;
+    total_range_bytes(ranges).saturating_sub(before)
+}
+
+fn total_range_bytes(ranges: &[(u64, u64)]) -> u64 {
+    ranges
+        .iter()
+        .map(|(start, end)| end.saturating_sub(*start))
+        .sum()
+}
+
+fn contiguous_prefix(ranges: &[(u64, u64)]) -> u64 {
+    let mut sorted = ranges.to_vec();
+    sorted.sort_by_key(|range| range.0);
+    let mut next = 0u64;
+    for (start, end) in sorted {
+        if start > next {
+            break;
+        }
+        next = next.max(end);
+    }
+    next
+}
+
+fn json_ranges(ranges: &[(u64, u64)]) -> Vec<[u64; 2]> {
+    ranges.iter().map(|(start, end)| [*start, *end]).collect()
 }
 
 async fn set_task_phase(
@@ -1273,11 +1396,29 @@ mod tests {
             final_path: PathBuf::from("a.txt"),
             tmp_path: PathBuf::from("a.txt.wormhole_tmp"),
             received_size: 0,
+            received_ranges: Vec::new(),
+            completion_started: false,
             completed: false,
         };
         let err = bind_or_check_sha256(&mut file, Some(&"b".repeat(64)))
             .expect_err("sha mismatch must fail");
         assert_eq!(err.code, "sha256_mismatch");
+    }
+
+    #[test]
+    fn received_ranges_merge_without_double_counting() {
+        let mut ranges = Vec::new();
+        assert_eq!(merge_received_range(&mut ranges, 1024, 2048), 1024);
+        assert_eq!(merge_received_range(&mut ranges, 0, 1024), 1024);
+        assert_eq!(ranges, vec![(0, 2048)]);
+        assert_eq!(contiguous_prefix(&ranges), 2048);
+        assert_eq!(merge_received_range(&mut ranges, 512, 1536), 0);
+        assert_eq!(ranges, vec![(0, 2048)]);
+        assert_eq!(merge_received_range(&mut ranges, 4096, 8192), 4096);
+        assert_eq!(contiguous_prefix(&ranges), 2048);
+        assert_eq!(merge_received_range(&mut ranges, 2048, 4096), 2048);
+        assert_eq!(ranges, vec![(0, 8192)]);
+        assert_eq!(contiguous_prefix(&ranges), 8192);
     }
 
     #[test]

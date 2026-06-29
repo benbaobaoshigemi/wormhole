@@ -88,6 +88,32 @@ def draw_icon(size: int) -> Image.Image:
     return img
 
 
+def draw_template_tray_icon(size: int) -> Image.Image:
+    scale = size / 32
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    box = (
+        int(size * 0.15),
+        int(size * 0.25),
+        int(size * 0.85),
+        int(size * 0.75),
+    )
+    draw.ellipse(box, outline=(255, 255, 255, 255), width=max(2, int(3 * scale)))
+    left = (int(size * 0.33), int(size * 0.50))
+    right = (int(size * 0.67), int(size * 0.50))
+    radius = max(2, int(4 * scale))
+    draw.line((left[0], left[1], right[0], right[1]), fill=(255, 255, 255, 255), width=max(2, int(2 * scale)))
+    draw.ellipse(
+        (left[0] - radius, left[1] - radius, left[0] + radius, left[1] + radius),
+        fill=(255, 255, 255, 255),
+    )
+    draw.ellipse(
+        (right[0] - radius, right[1] - radius, right[0] + radius, right[1] + radius),
+        fill=(255, 255, 255, 255),
+    )
+    return img
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     images = []
@@ -97,6 +123,7 @@ def main() -> None:
         images.append(icon)
     images[-1].save(OUT / "wormhole.png")
     images[2].save(OUT / "wormhole-tray.png")
+    draw_template_tray_icon(32).save(OUT / "wormhole-tray-template.png")
     images[2].save(OUT / "wormhole.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     images[-1].save(OUT / "Wormhole.icns", sizes=[(16, 16), (32, 32), (128, 128), (256, 256), (512, 512), (1024, 1024)])
 
