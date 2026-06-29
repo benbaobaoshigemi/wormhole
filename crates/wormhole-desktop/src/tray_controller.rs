@@ -33,7 +33,7 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
     let status_item = MenuItem::new("状态：读取中", false, None);
     let peer_item = MenuItem::new("对端：-", false, None);
     let open_center = MenuItem::new("打开控制中心", true, None);
-    let open_drop_window = MenuItem::new("打开原生拖拽投递", true, None);
+    let edge_drop_toggle = CheckMenuItem::new("启用边缘投递", true, true, None);
     let send_file = MenuItem::new("发送文件", true, None);
     let send_folder = MenuItem::new("发送文件夹", true, None);
     let open_receive = MenuItem::new("打开接收目录", true, None);
@@ -54,7 +54,7 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
         &peer_item,
         &PredefinedMenuItem::separator(),
         &open_center,
-        &open_drop_window,
+        &edge_drop_toggle,
         &send_file,
         &send_folder,
         &open_receive,
@@ -82,6 +82,7 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
     let menu_channel = MenuEvent::receiver();
     let mut last_state_refresh = Instant::now() - Duration::from_secs(60);
     let mut drop_window: Option<DropZoneWindow> = None;
+    let mut edge_drop_enabled = true;
 
     let client = daemon.client();
     let control_center_url = daemon.control_center_url();
@@ -94,6 +95,20 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
             event,
             Event::NewEvents(StartCause::ResumeTimeReached { .. } | StartCause::Init)
         ) {
+            if edge_drop_enabled && drop_window.is_none() {
+                match DropZoneWindow::new(event_loop_target, event_proxy.clone()) {
+                    Ok(window) => drop_window = Some(window),
+                    Err(err) => {
+                        eprintln!("EdgeDropZone failed to start: {err:?}");
+                        status_item.set_text(format!("边缘投递不可用：{err}"));
+                        edge_drop_enabled = false;
+                        edge_drop_toggle.set_checked(false);
+                    }
+                }
+            }
+            if let Some(window) = &drop_window {
+                window.tick();
+            }
             if last_state_refresh.elapsed() > Duration::from_secs(3) {
                 if let Ok(state) = client.state() {
                     status_item.set_text(format!("状态：{}", state.status));
@@ -130,6 +145,8 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
                     Some(DropZoneAction::Close)
                 ) {
                     drop_window = None;
+                    edge_drop_enabled = false;
+                    edge_drop_toggle.set_checked(false);
                 }
             }
         }
@@ -144,18 +161,22 @@ pub fn run_tray(mut daemon: DaemonManager) -> Result<()> {
             let id = event.id;
             if id == open_center.id() {
                 let _ = browser_open::open_control_center(&control_center_url);
-            } else if id == open_drop_window.id() {
-                match &drop_window {
-                    Some(window) => {
-                        window.show();
-                    }
-                    None => {
-                        if let Ok(window) =
-                            DropZoneWindow::new(event_loop_target, event_proxy.clone())
-                        {
-                            drop_window = Some(window);
+            } else if id == edge_drop_toggle.id() {
+                edge_drop_enabled = !edge_drop_enabled;
+                edge_drop_toggle.set_checked(edge_drop_enabled);
+                if edge_drop_enabled {
+                    match DropZoneWindow::new(event_loop_target, event_proxy.clone()) {
+                        Ok(window) => drop_window = Some(window),
+                        Err(err) => {
+                            eprintln!("EdgeDropZone failed to start: {err:?}");
+                            status_item.set_text(format!("边缘投递不可用：{err}"));
+                            edge_drop_enabled = false;
+                            edge_drop_toggle.set_checked(false);
                         }
                     }
+                } else if let Some(window) = &drop_window {
+                    window.disable();
+                    drop_window = None;
                 }
             } else if id == send_file.id() {
                 if let Some(paths) = pick_files() {

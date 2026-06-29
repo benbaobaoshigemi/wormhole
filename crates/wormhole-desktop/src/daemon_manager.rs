@@ -83,79 +83,20 @@ impl DaemonManager {
             }
         }
 
-        // 2. 检查防火墙规则（仅在 Windows 上）
-        #[cfg(windows)]
-        {
-            let check_result = query_firewall_status_sync(&resolved_target_daemon);
-            if check_result == "missing_rule"
-                || check_result == "stale_program_path"
-                || check_result == "blocked_by_rule"
-            {
-                // 需要修复防火墙
-                let description = format!(
-                    "Wormhole 需要允许局域网内另一台电脑连接本机 daemon。\n\n我们将请求管理员权限添加仅限专用网络和本地子网的入站规则。\n\n这不会关闭防火墙，也不会开放公用网络。"
-                );
-
-                let confirm = rfd::MessageDialog::new()
-                    .set_title("Wormhole 防火墙网络授权")
-                    .set_description(&description)
-                    .set_buttons(rfd::MessageButtons::OkCancel)
-                    .set_level(rfd::MessageLevel::Warning)
-                    .show();
-
-                if matches!(
-                    confirm,
-                    rfd::MessageDialogResult::Ok | rfd::MessageDialogResult::Yes
-                ) {
-                    // 用户确认了，用 UAC 提权执行防火墙脚本
-                    let ps_script = product_dir
-                        .join("scripts")
-                        .join("install-windows-firewall-rule.ps1");
-                    let ps_script = if ps_script.is_file() {
-                        ps_script
-                    } else {
-                        // 备用开发路径
-                        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                            .join("../../scripts/install-windows-firewall-rule.ps1")
-                    };
-
-                    let daemon_arg = resolved_target_daemon.to_string_lossy();
-                    let args = format!(
-                        "-NoProfile -ExecutionPolicy Bypass -File \"{}\" -DaemonPath \"{}\"",
-                        ps_script.to_string_lossy(),
-                        daemon_arg
-                    );
-
-                    let _ = std::process::Command::new("powershell")
-                        .args(&[
-                            "-NoProfile",
-                            "-Command",
-                            &format!(
-                                "Start-Process powershell -Verb RunAs -Wait -ArgumentList '{}'",
-                                args.replace('\'', "''")
-                            ),
-                        ])
-                        .output();
-
-                    // 等待修复生效（最多轮询 8 秒）
-                    let deadline = std::time::Instant::now() + Duration::from_secs(8);
-                    while std::time::Instant::now() < deadline {
-                        let current_status = query_firewall_status_sync(&resolved_target_daemon);
-                        if current_status == "ok" {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(500));
-                    }
-                } else {
-                    eprintln!("User cancelled firewall UAC repair.");
-                }
-            }
-        }
-
         if manager.client.state().is_err() {
             manager.launch_daemon()?;
         }
         manager.wait_until_ready()?;
+        #[cfg(windows)]
+        {
+            let firewall_status = query_firewall_status_sync(&resolved_target_daemon);
+            if firewall_status != "ok" && firewall_status != "unknown" {
+                eprintln!(
+                    "Wormhole firewall needs attention: status={firewall_status}, daemon={}",
+                    resolved_target_daemon.display()
+                );
+            }
+        }
         manager.check_peer_reachability();
         Ok(manager)
     }

@@ -39,9 +39,8 @@ Set-Content -LiteralPath (Join-Path $OutDir "README_START.txt") -Value @"
 Double-click Wormhole.exe to start Wormhole.
 The launcher starts wormhole-daemon.exe, shows the system tray menu, and opens the control center.
 
-Wormhole features automatic Windows firewall configuration:
-- On first start or if firewall rules are corrupted/missing, Wormhole will request administrator permissions via a UAC prompt to add an inbound rule.
-- This rule is strict: it only allows connections from the Local Subnet (LocalSubnet) and only on Private or Domain-authenticated networks.
+Wormhole starts the daemon first and keeps firewall repair as a manual diagnostic action.
+- The recommended rule only allows connections from the Local Subnet (LocalSubnet) on Private or Domain-authenticated networks.
 - It will NOT turn off your Windows firewall, and it will NOT allow connections from Public networks.
 - If the peer Mac computer still shows "peer_offline", ensure that your current Windows network category is set to "Private" (专用网络) instead of "Public".
 
