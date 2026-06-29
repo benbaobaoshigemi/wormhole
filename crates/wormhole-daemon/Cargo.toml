@@ -19,7 +19,6 @@ tokio-stream.workspace = true
 tower-http = { workspace = true, features = ["fs"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
-ureq = { version = "2", features = ["json"] }
 uuid.workspace = true
 wormhole-core = { path = "../wormhole-core" }
 wormhole-platform = { path = "../wormhole-platform" }

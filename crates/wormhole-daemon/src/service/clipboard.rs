@@ -13,7 +13,10 @@ use crate::{
     dto::ImagePrepareResponse,
     error::ApiError,
     state::{AppState, PreparedImageState},
-    transport::clipboard_transport::{self, ClipboardUploadOutcome},
+    transport::{
+        clipboard_transport::{self, ClipboardUploadOutcome},
+        peer_http,
+    },
 };
 
 pub const IMAGE_CHUNK_SIZE: usize = 256 * 1024;
@@ -506,13 +509,7 @@ fn peer_post_json<T: serde::de::DeserializeOwned>(
     body: &impl serde::Serialize,
     token: Option<&str>,
 ) -> Result<T> {
-    let mut request = ureq::post(url).timeout(Duration::from_secs(30));
-    if let Some(token) = token {
-        request = request.set("x-wormhole-token", token);
-    }
-    Ok(request
-        .send_json(serde_json::to_value(body)?)?
-        .into_json()?)
+    peer_http::post_json(url, body, token, Duration::from_secs(30))
 }
 
 fn prepared_image_key(source_device_id: &str, hash: &str) -> String {

@@ -3,6 +3,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 
+use crate::transport::peer_http;
+
 #[derive(Debug, Deserialize)]
 struct ImagePrepareResponse {
     accepted: bool,
@@ -69,24 +71,11 @@ fn post_json<T: serde::de::DeserializeOwned>(
     body: &impl serde::Serialize,
     token: Option<&str>,
 ) -> Result<T> {
-    let mut request = ureq::post(url).timeout(Duration::from_secs(30));
-    if let Some(token) = token {
-        request = request.set("x-wormhole-token", token);
-    }
-    Ok(request
-        .send_json(serde_json::to_value(body)?)?
-        .into_json()?)
+    peer_http::post_json(url, body, token, Duration::from_secs(30))
 }
 
 fn post_bytes(url: &str, bytes: &[u8], token: Option<&str>) -> Result<()> {
-    let mut request = ureq::post(url)
-        .timeout(Duration::from_secs(60))
-        .set("content-type", "application/octet-stream");
-    if let Some(token) = token {
-        request = request.set("x-wormhole-token", token);
-    }
-    request.send_bytes(bytes)?;
-    Ok(())
+    peer_http::post_empty_with_body(url, bytes, token, Duration::from_secs(60))
 }
 
 fn url_escape(value: &str) -> String {

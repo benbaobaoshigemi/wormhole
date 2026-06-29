@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import getpass
+import argparse
+import ipaddress
 import json
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -13,6 +16,32 @@ import zipfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 REMOTE_ROOT = "/Users/benbaobaoshigemi/Desktop/hole"
 REMOTE_USER = "benbaobaoshigemi"
+DISALLOWED_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in (
+        "0.0.0.0/8",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "198.18.0.0/15",
+        "224.0.0.0/4",
+    )
+)
+VIRTUAL_INTERFACE_MARKERS = (
+    "clash",
+    "mihomo",
+    "tun",
+    "tap",
+    "wintun",
+    "wireguard",
+    "zerotier",
+    "tailscale",
+    "vpn",
+    "vethernet",
+    "hyper-v",
+    "vmware",
+    "virtualbox",
+    "loopback",
+)
 
 
 def run(cmd, cwd=ROOT):
@@ -22,10 +51,131 @@ def run(cmd, cwd=ROOT):
     return completed.stdout
 
 
-def local_ip_for(host: str) -> str:
+def local_ip_for(host: str, override: str | None = None) -> str:
+    if override:
+        return validate_windows_host(override, "--windows-host")
+
+    host_ip = ipaddress.ip_address(host)
+    candidates = discover_windows_lan_candidates()
+    ranked = sorted(
+        candidates,
+        key=lambda candidate: candidate.score_for(host_ip),
+        reverse=True,
+    )
+    if ranked and ranked[0].score_for(host_ip) > 0:
+        selected = ranked[0]
+        print(
+            f"Selected Windows LAN IP for macOS peer config: {selected.ip} "
+            f"({selected.adapter})"
+        )
+        return str(selected.ip)
+
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.connect((host, 9))
-        return s.getsockname()[0]
+        routed_ip = validate_windows_host(s.getsockname()[0], "UDP route probe")
+        print(f"Selected Windows LAN IP from UDP route probe: {routed_ip}")
+        return routed_ip
+
+
+class LanCandidate:
+    def __init__(self, adapter: str, ip: ipaddress.IPv4Address, mask: str | None):
+        self.adapter = adapter
+        self.ip = ip
+        self.mask = mask
+
+    def score_for(self, peer_ip: ipaddress._BaseAddress) -> int:
+        if not isinstance(peer_ip, ipaddress.IPv4Address):
+            return 0
+        if self.mask:
+            try:
+                if peer_ip in ipaddress.ip_network(f"{self.ip}/{self.mask}", strict=False):
+                    return 100
+            except ValueError:
+                pass
+        if self.ip.is_private and peer_ip.is_private:
+            if str(self.ip).split(".")[:3] == str(peer_ip).split(".")[:3]:
+                return 90
+            if str(self.ip).split(".")[:2] == str(peer_ip).split(".")[:2]:
+                return 50
+            return 10
+        return 0
+
+
+def validate_windows_host(value: str, source: str) -> str:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{source} must be an IPv4 address, got {value!r}") from exc
+    if not isinstance(ip, ipaddress.IPv4Address):
+        raise RuntimeError(f"{source} must be an IPv4 address, got {value!r}")
+    if is_disallowed_ip(ip):
+        raise RuntimeError(
+            f"{source} resolved to {ip}, which is not a valid LAN peer address "
+            "for Wormhole. Disable the virtual adapter or pass --windows-host "
+            "with the real Windows LAN IP."
+        )
+    return str(ip)
+
+
+def is_disallowed_ip(ip: ipaddress.IPv4Address) -> bool:
+    return any(ip in network for network in DISALLOWED_NETWORKS)
+
+
+def is_virtual_adapter(adapter: str) -> bool:
+    lowered = adapter.lower()
+    return any(marker in lowered for marker in VIRTUAL_INTERFACE_MARKERS)
+
+
+def discover_windows_lan_candidates() -> list[LanCandidate]:
+    if os.name != "nt":
+        return []
+    completed = subprocess.run(
+        ["ipconfig"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        return []
+
+    candidates: list[LanCandidate] = []
+    adapter = ""
+    current_ip: ipaddress.IPv4Address | None = None
+    current_mask: str | None = None
+
+    def flush() -> None:
+        nonlocal current_ip, current_mask
+        if (
+            adapter
+            and current_ip
+            and not is_virtual_adapter(adapter)
+            and not is_disallowed_ip(current_ip)
+        ):
+            candidates.append(LanCandidate(adapter, current_ip, current_mask))
+        current_ip = None
+        current_mask = None
+
+    for raw_line in completed.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if raw_line and not raw_line[0].isspace() and line.endswith(":"):
+            flush()
+            adapter = line[:-1]
+            continue
+        if "IPv4" in line:
+            match = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+            if match:
+                current_ip = ipaddress.ip_address(match.group(1))
+            continue
+        if "Subnet Mask" in line:
+            match = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", line)
+            if match:
+                current_mask = match.group(1)
+    flush()
+    return candidates
 
 
 def make_source_package(package: pathlib.Path) -> None:
@@ -103,12 +253,20 @@ def fill_config_defaults(config: dict) -> dict:
 def main() -> int:
     import paramiko
 
-    host = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.180"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("host", nargs="?", default="192.168.1.180")
+    parser.add_argument(
+        "--windows-host",
+        help="Real Windows LAN IPv4 address to write into the macOS peer config.",
+    )
+    args = parser.parse_args()
+
+    host = args.host
     password = (
         os.environ.get("WORMHOLE_REMOTE_PASSWORD")
         or getpass.getpass("macOS SSH password: ")
     )
-    local_ip = local_ip_for(host)
+    local_ip = local_ip_for(host, args.windows_host)
     mac_config_path = ROOT / ".wormhole" / "macos" / "config.json"
     win_config_path = ROOT / ".wormhole" / "windows" / "config.json"
     if not mac_config_path.exists():

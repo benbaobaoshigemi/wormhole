@@ -13,6 +13,8 @@ use std::{
     time::Duration,
 };
 
+use crate::transport::peer_http;
+
 #[derive(Debug, Deserialize)]
 struct PeerUploadStatus {
     complete: bool,
@@ -201,13 +203,7 @@ fn run_upload_worker(
 }
 
 fn get_json_auth<T: serde::de::DeserializeOwned>(url: &str, token: Option<&str>) -> Result<T> {
-    retry_peer_io(|| {
-        let mut request = ureq::get(url).timeout(Duration::from_secs(30));
-        if let Some(token) = token {
-            request = request.set("x-wormhole-token", token);
-        }
-        Ok(request.call()?.into_json()?)
-    })
+    retry_peer_io(|| peer_http::get_json(url, token, Duration::from_secs(30)))
 }
 
 fn post_chunk(
@@ -224,13 +220,7 @@ fn post_chunk(
     } else {
         Duration::from_secs(45)
     };
-    let mut request = ureq::post(&url)
-        .timeout(timeout)
-        .set("content-type", "application/octet-stream");
-    if let Some(token) = token {
-        request = request.set("x-wormhole-token", token);
-    }
-    Ok(request.send_bytes(bytes)?.into_json()?)
+    peer_http::post_bytes(&url, bytes, token, timeout)
 }
 
 fn missing_chunk_jobs(
@@ -277,14 +267,7 @@ fn valid_range(start: u64, end: u64, size: u64) -> Option<(u64, u64)> {
 
 fn touch_empty(base_url: &str, token: Option<&str>) -> Result<()> {
     let url = base_url.replace("/peer/transfer/upload-chunk/", "/peer/transfer/touch/");
-    retry_peer_io(|| {
-        let mut request = ureq::post(&url).timeout(Duration::from_secs(45));
-        if let Some(token) = token {
-            request = request.set("x-wormhole-token", token);
-        }
-        request.call()?;
-        Ok(())
-    })
+    retry_peer_io(|| peer_http::post_empty(&url, token, Duration::from_secs(45)))
 }
 
 fn retry_peer_io<T>(mut op: impl FnMut() -> Result<T>) -> Result<T> {

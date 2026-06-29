@@ -20,7 +20,7 @@ use crate::{
     dto::{RetryRequest, SendRequest},
     error::ApiError,
     state::{AppState, FailedTransfer, ReceiveFileState, ReceiveTaskState},
-    transport::transfer_transport,
+    transport::{peer_http, transfer_transport},
 };
 
 pub const MAX_CHUNK_SIZE: usize = 2 * 1024 * 1024;
@@ -1275,13 +1275,7 @@ fn peer_post_json<T: serde::de::DeserializeOwned>(
     body: &impl serde::Serialize,
     token: Option<&str>,
 ) -> Result<T> {
-    let mut request = ureq::post(url).timeout(Duration::from_secs(30));
-    if let Some(token) = token {
-        request = request.set("x-wormhole-token", token);
-    }
-    Ok(request
-        .send_json(serde_json::to_value(body)?)?
-        .into_json()?)
+    peer_http::post_json(url, body, token, Duration::from_secs(30))
 }
 
 pub fn public_task(task: &TransferTask) -> serde_json::Value {

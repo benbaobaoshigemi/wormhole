@@ -7,7 +7,7 @@ use wormhole_core::{ConnectionStatus, PublicDevice};
 #[cfg(windows)]
 use std::process::Command;
 
-use crate::{error::ApiError, state::AppState};
+use crate::{error::ApiError, state::AppState, transport::peer_http};
 
 pub async fn connect(state: &AppState) -> Result<Json<serde_json::Value>, ApiError> {
     *state.status.write().await = ConnectionStatus::Connecting;
@@ -81,10 +81,7 @@ pub async fn connection_loop(state: AppState) {
 }
 
 fn peer_get_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T> {
-    Ok(ureq::get(url)
-        .timeout(Duration::from_secs(30))
-        .call()?
-        .into_json()?)
+    peer_http::get_json(url, None, Duration::from_secs(30))
 }
 
 #[cfg(windows)]

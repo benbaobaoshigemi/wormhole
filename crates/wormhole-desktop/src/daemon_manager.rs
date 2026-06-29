@@ -16,27 +16,23 @@ pub struct DaemonManager {
     config_path: PathBuf,
     log_dir: PathBuf,
     child: Option<Child>,
-    #[cfg(target_os = "macos")]
-    launch_agent_plist: Option<PathBuf>,
     client: LocalApiClient,
 }
 
 impl DaemonManager {
     pub fn start_or_attach() -> Result<Self> {
         let product_dir = product_dir()?;
-        let config_path = config_path(&product_dir);
-        ensure_config(&config_path)?;
+        let config_path = config_path(&product_dir)?;
+        ensure_config(&product_dir, &config_path)?;
         let config = AppConfig::load(&config_path)?;
         let client = LocalApiClient::new(config.port);
-        let log_dir = product_dir.join("logs");
+        let log_dir = log_dir(&product_dir)?;
         fs::create_dir_all(&log_dir)?;
 
         let mut manager = Self {
             config_path,
             log_dir,
             child: None,
-            #[cfg(target_os = "macos")]
-            launch_agent_plist: None,
             client,
         };
 
@@ -76,6 +72,10 @@ impl DaemonManager {
                             )
                         ])
                         .output();
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = stop_running_daemon(&manager.client);
                 }
 
                 // 等待让它退出
@@ -124,10 +124,6 @@ impl DaemonManager {
             let _ = child.kill();
             let _ = child.wait();
         }
-        #[cfg(target_os = "macos")]
-        if let Some(plist) = self.launch_agent_plist.take() {
-            let _ = unload_launch_agent(&plist);
-        }
         let _ = stop_running_daemon(&self.client);
     }
 
@@ -138,9 +134,7 @@ impl DaemonManager {
     fn launch_daemon(&mut self) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            let plist =
-                launch_daemon_with_launch_agent(&daemon_path()?, &self.config_path, &self.log_dir)?;
-            self.launch_agent_plist = Some(plist);
+            self.launch_daemon_with_launch_agent()?;
             return Ok(());
         }
 
@@ -165,6 +159,40 @@ impl DaemonManager {
             self.child = Some(child);
             Ok(())
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn launch_daemon_with_launch_agent(&mut self) -> Result<()> {
+        let daemon = daemon_path()?;
+        let plist = launch_agent_plist()?;
+        if let Some(parent) = plist.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::create_dir_all(&self.log_dir)?;
+        unload_launch_agent(&plist)?;
+
+        let stdout = self.log_dir.join("daemon.out.log");
+        let stderr = self.log_dir.join("daemon.err.log");
+        let plist_body = launch_agent_plist_body(
+            &daemon,
+            &self.config_path,
+            &product_dir()?,
+            &stdout,
+            &stderr,
+        );
+        fs::write(&plist, plist_body)?;
+        let domain = launchctl_domain()?;
+        let output = Command::new("launchctl")
+            .args(["bootstrap", &domain, &plist.to_string_lossy()])
+            .output()
+            .context("bootstrap Wormhole daemon LaunchAgent")?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "launchctl bootstrap failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(())
     }
 
     fn wait_until_ready(&self) -> Result<()> {
@@ -223,18 +251,74 @@ fn product_dir() -> Result<PathBuf> {
         .unwrap_or(std::env::current_dir()?))
 }
 
-fn config_path(product_dir: &Path) -> PathBuf {
-    std::env::var_os("WORMHOLE_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| product_dir.join("config").join("config.json"))
+fn config_path(_product_dir: &Path) -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("WORMHOLE_CONFIG") {
+        return Ok(PathBuf::from(path));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(app_support_dir()?.join("config.json"));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(_product_dir.join("config").join("config.json"))
+    }
 }
 
-fn ensure_config(path: &Path) -> Result<()> {
+fn ensure_config(product_dir: &Path, path: &Path) -> Result<()> {
     if path.exists() {
+        normalize_runtime_config(path)?;
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let bundled = product_dir.join("config").join("config.json");
+    if bundled.is_file() {
+        fs::copy(&bundled, path).with_context(|| {
+            format!(
+                "copy bundled config {} to {}",
+                bundled.display(),
+                path.display()
+            )
+        })?;
+        normalize_runtime_config(path)?;
         return Ok(());
     }
     let config = AppConfig::default_at(path, 53_000 + 317, "127.0.0.1".to_string(), 53318)?;
-    config.save(path)
+    config.save(path)?;
+    normalize_runtime_config(path)
+}
+
+fn log_dir(_product_dir: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(home_dir()?.join("Library").join("Logs").join("Wormhole"));
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(_product_dir.join("logs"))
+    }
+}
+
+fn normalize_runtime_config(path: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let support = app_support_dir()?;
+        let mut config = AppConfig::load(path)?;
+        let receive_dir = support.join("Received");
+        let data_dir = support.join("Data");
+        if config.receive_dir != receive_dir || config.data_dir != data_dir {
+            config.receive_dir = receive_dir;
+            config.data_dir = data_dir;
+            config.save(path)?;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 fn daemon_path() -> Result<PathBuf> {
@@ -262,32 +346,38 @@ fn looks_like_local_network_privacy_denial(error: &str) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn launch_daemon_with_launch_agent(
-    daemon: &Path,
-    config_path: &Path,
-    log_dir: &Path,
-) -> Result<PathBuf> {
-    fs::create_dir_all(log_dir)?;
-    let launch_agents = std::env::var_os("HOME")
+fn home_dir() -> Result<PathBuf> {
+    std::env::var_os("HOME")
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("HOME is not set"))?
+        .ok_or_else(|| anyhow!("HOME is not set"))
+}
+
+#[cfg(target_os = "macos")]
+fn app_support_dir() -> Result<PathBuf> {
+    Ok(home_dir()?
         .join("Library")
-        .join("LaunchAgents");
-    fs::create_dir_all(&launch_agents)?;
+        .join("Application Support")
+        .join("Wormhole"))
+}
 
-    let plist = launch_agents.join("dev.wormhole.daemon.plist");
-    let stdout = log_dir.join("daemon.out.log");
-    let stderr = log_dir.join("daemon.err.log");
-    let working_dir = daemon
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or(std::env::current_dir()?);
+#[cfg(target_os = "macos")]
+fn launch_agent_plist() -> Result<PathBuf> {
+    Ok(home_dir()?
+        .join("Library")
+        .join("LaunchAgents")
+        .join("dev.wormhole.daemon.plist"))
+}
 
-    let _ = unload_launch_agent(&plist);
-    fs::write(
-        &plist,
-        format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+#[cfg(target_os = "macos")]
+fn launch_agent_plist_body(
+    daemon: &Path,
+    config: &Path,
+    working_dir: &Path,
+    stdout: &Path,
+    stderr: &Path,
+) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -300,32 +390,27 @@ fn launch_daemon_with_launch_agent(
   </array>
   <key>WorkingDirectory</key><string>{}</string>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><false/>
   <key>StandardOutPath</key><string>{}</string>
   <key>StandardErrorPath</key><string>{}</string>
 </dict>
 </plist>
 "#,
-            plist_escape(&daemon.to_string_lossy()),
-            plist_escape(&config_path.to_string_lossy()),
-            plist_escape(&working_dir.to_string_lossy()),
-            plist_escape(&stdout.to_string_lossy()),
-            plist_escape(&stderr.to_string_lossy())
-        ),
-    )?;
+        plist_escape(&daemon.to_string_lossy()),
+        plist_escape(&config.to_string_lossy()),
+        plist_escape(&working_dir.to_string_lossy()),
+        plist_escape(&stdout.to_string_lossy()),
+        plist_escape(&stderr.to_string_lossy())
+    )
+}
 
-    let domain = launchctl_domain()?;
-    let output = Command::new("launchctl")
-        .args(["bootstrap", &domain, &plist.to_string_lossy()])
-        .output()
-        .context("start daemon with launchctl bootstrap")?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "launchctl bootstrap failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(plist)
+#[cfg(target_os = "macos")]
+fn plist_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 #[cfg(target_os = "macos")]
@@ -342,13 +427,7 @@ fn unload_launch_agent(plist: &Path) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn stop_running_daemon(client: &LocalApiClient) -> Result<()> {
-    let default_plist = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("HOME is not set"))?
-        .join("Library")
-        .join("LaunchAgents")
-        .join("dev.wormhole.daemon.plist");
-    let _ = unload_launch_agent(&default_plist);
+    let _ = unload_launch_agent(&launch_agent_plist()?);
 
     let daemon_path = client
         .state()
@@ -406,16 +485,6 @@ fn launchctl_domain() -> Result<String> {
     }
     let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(format!("gui/{uid}"))
-}
-
-#[cfg(target_os = "macos")]
-fn plist_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 #[cfg(windows)]
